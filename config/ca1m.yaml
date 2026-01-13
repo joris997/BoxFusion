@@ -45,8 +45,8 @@ box_fusion:
 
 vis:
   rerun: True # visualization, set to False for acceleration
-  show_class: False # show object class
-  show_label: False # show box id
+  show_class: True # show object class
+  show_label: True # show box id
   trajectory: True
 
-eval: False #True
+eval: True #True

@@ -7,21 +7,50 @@ data:
   gap: 25
 
 
-cam:
+# cam:
+#   H: 480
+#   W: 640
+#   fx: 320.0
+#   fy: 320.0
+#   cx: 319.5
+#   cy: 239.5
+#   png_depth_scale: 1000.
+# cam:
+#   H: 480
+#   W: 640
+#   fx: 607.2999
+#   fy: 607.3384
+#   cx: 319.2763
+#   cy: 235.4929
+#   png_depth_scale: 1000
+# Azure Kinect DK
+rgb_cam: # scaled from 2048x1536
   H: 480
   W: 640
-  fx: 320.0
-  fy: 320.0
-  cx: 319.5
-  cy: 239.5
-  png_depth_scale: 1000.
+  fx: 303.2797
+  fy: 303.1887
+  cx: 315.6464
+  cy: 242.3771
+depth_cam: # scaled from 1024x1024
+  H: 480
+  W: 640
+  # fx: 315.85
+  # fy: 236.74
+  # cx: 320.25
+  # cy: 240.53
+  fx: 303.2797
+  fy: 303.1887
+  cx: 315.6464
+  cy: 242.3771
+  png_depth_scale: 1000.0
 
 detection:
-  score_thresh: 0.35 #0.4 #0.25
+  score_thresh: 0.4 #0.4 #0.25
   uv_bound: True
   uv_bound_value: 0.9
   floor_mask: True #False
   floor_ratio: 15
+  scale_box: 0.75
 
 association:
   small_threshold: 0.1 #0.2
@@ -46,8 +75,8 @@ box_fusion:
 
 vis:
   rerun: True 
-  show_class: False 
-  show_label: False 
+  show_class: True 
+  show_label: True 
   trajectory: True
 
 eval: False

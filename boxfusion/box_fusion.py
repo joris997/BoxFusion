@@ -34,12 +34,12 @@ class BoxFusion(object):
         self.basedir = cfg['data']['datadir']
 
         if 'scannet' in self.basedir.lower() or cfg["dataset"] == 'online':
-            self.K = np.array([[cfg['cam']['fx'], 0.0, cfg['cam']['cx'],0.0],
-                            [0.0, cfg['cam']['fy'], cfg['cam']['cy'],0.0],
+            self.K = np.array([[cfg['rgb_cam']['fx'], 0.0, cfg['rgb_cam']['cx'],0.0],
+                            [0.0, cfg['rgb_cam']['fy'], cfg['rgb_cam']['cy'],0.0],
                             [0.0,0.0,1.0,0.0],
                             [0.0,0.0,0.0,1.0]])
-            self.H=cfg["cam"]["H"] #l
-            self.W=cfg["cam"]["W"] #s
+            self.H=cfg["rgb_cam"]["H"] #l
+            self.W=cfg["rgb_cam"]["W"] #s
 
         else: # CA1M
             depth_intric = np.loadtxt(os.path.join(self.basedir, 'K_depth.txt')).reshape(3,3)

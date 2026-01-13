@@ -161,6 +161,8 @@ class Preprocessor(object):
                 if batched_measurements[0].__orig_class__ in (PosedDepth,):
                     # Very bad, but assume the PosedImage here gets processed first, so that
                     # square_pad and rgb_size are assigned.
+                    # print(f"rgb_size: {rgb_size}")
+                    # print(f"batched_measurements[0].info.size: {batched_measurements[0].info.size}")
                     rgb_to_depth_ratio = round(rgb_size[0] / batched_measurements[0].info.size[0])
                     if rgb_to_depth_ratio not in [1, 2, 4]:
                         raise ValueError(f"Unsupported rgb -> depth ratio: {rgb_to_depth_ratio}")

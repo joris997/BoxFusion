@@ -34,6 +34,7 @@ from sensor_msgs.msg import Image
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import Buffer, TransformListener
 from tf2_ros import TransformException
+from sensor_msgs.msg import PointCloud2
 import cv_bridge
 import numpy as np
 import queue
@@ -113,7 +114,6 @@ class MultiSensorFusion(Node):
         # 2. 
         self.bridge = cv_bridge.CvBridge()
         
- 
         # 3. 
         self.rgb_queue = queue.Queue(maxsize=200)
         self.depth_queue = queue.Queue(maxsize=200)
@@ -129,16 +129,22 @@ class MultiSensorFusion(Node):
         # 4. 
         self.tf_buffer = Buffer(cache_time=rclpy.time.Duration(seconds=10))
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.source_frame = 'map'
-        self.target_frame = 'camera_link'
+        self.source_frame = 'panda/panda_link0'#'camera_color_optical_frame'
+        self.target_frame = 'camera_base_boxfusion'#'camera_panda_boxfusion'#'camera_link'
         
         # 5. 
         self.rgb_sub = self.create_subscription(
+            # Image, '/camera/camera/color/image_raw', self.rgb_callback, 5)  # QoS=5
             Image, '/rgb/image_raw', self.rgb_callback, 5)  # QoS=5
         
         self.depth_sub = self.create_subscription(
-            Image, '/depth/image_raw', self.depth_callback, 5)
+            # Image, '/camera/camera/depth/image_rect_raw', self.depth_callback, 5)
+            Image, '/depth_to_rgb/image_raw', self.depth_callback, 5)
         
+        # Publishers
+        self.pointcloud_pub = self.create_publisher(
+            PointCloud2, '/camera/pointcloud', 10)
+
         # 6. 
         self.pose_timer = self.create_timer(0.02, self.pose_update)  # 50Hz
         
@@ -153,7 +159,7 @@ class MultiSensorFusion(Node):
         self.data_callback = callback
 
     def rgb_callback(self, msg):
-
+        # print("RGB callback")
         current_time = time.monotonic()
         if current_time - self.last_rgb_put_time < self.MIN_INTERVAL:
             return  
@@ -167,7 +173,7 @@ class MultiSensorFusion(Node):
             self.get_logger().warn(f"RGB error: {str(e)}")
 
     def depth_callback(self, msg):
-
+        # print("Depth callback")
         current_time = time.monotonic()
         if current_time - self.last_depth_put_time < self.MIN_INTERVAL:
             return  # 
@@ -180,7 +186,6 @@ class MultiSensorFusion(Node):
             self.get_logger().warn(f"error: {str(e)}")
 
     def pose_update(self):
-
         current_time = time.monotonic()
         if current_time - self.last_pose_put_time < self.MIN_INTERVAL:
             return  # skip
@@ -193,7 +198,7 @@ class MultiSensorFusion(Node):
                 transform = self.tf_buffer.lookup_transform(
                     self.source_frame,
                     self.target_frame,
-                    rclpy.time.Time(),
+                    self.get_clock().now(),
                     timeout=rclpy.time.Duration(seconds=0.05)
                 )
                 
@@ -209,7 +214,7 @@ class MultiSensorFusion(Node):
                 stamp = transform.header.stamp
                 timestamp = stamp.sec * 10**9 + stamp.nanosec
                 
-
+                # print(f"Pose timestamp: {timestamp}")
                 self.pose_queue.put((timestamp, pose_matrix), timeout=0.001)
                 self.last_pose_put_time = current_time
         except (TransformException, queue.Full) as e:
@@ -229,6 +234,7 @@ class MultiSensorFusion(Node):
 
     def process_synced_data(self):
         """30Hz"""
+        # print(f"rgb_queue size: {self.rgb_queue.qsize()}, depth_queue size: {self.depth_queue.qsize()}, pose_queue size: {self.pose_queue.qsize()}")
         try:
             # 1. 
             rgb_stamp, rgb_data = self.rgb_queue.get(timeout=0.01)
@@ -253,7 +259,6 @@ class MultiSensorFusion(Node):
                     min_time_diff = time_diff
                     closest_pose = pose_matrix
                     pose_stamp_match = pose_stamp
-            
                     # 4. 
                     for item in pose_items:
                         if item[0] != pose_stamp_match:  
@@ -271,12 +276,11 @@ class MultiSensorFusion(Node):
 
             self.frame_count = 0
             self.last_log_time = current_time
-            
-
             self.process_fusion_data(rgb_data, depth_data, closest_pose)
             
             
         except queue.Empty:
+            # print("Queue empty, skipping frame")
             pass
 
     def process_fusion_data(self, rgb, depth, pose):
@@ -285,12 +289,8 @@ class MultiSensorFusion(Node):
             depth: [H, W] numpy (dtype=uint16)
             pose: [4, 4] numpy(dtype=float64)
         """
-
         position = pose[:3, 3]
         rotation = pose[:3, :3]
-
-        
-
         try:
             self.result_queue.put({
                 'rgb': rgb,
@@ -301,7 +301,6 @@ class MultiSensorFusion(Node):
             self.get_logger().warn("full skip data")
 
     def get_synced_data(self, timeout=1.0):
-
         return self.result_queue.get(timeout=timeout)
 
 
@@ -314,27 +313,49 @@ class ROSDataset(IterableDataset):
 
         self.basedir = cfg['data']['datadir']
 
-
         # self.frame_ids = range(0, len(self.img_files))
         self.num_frames = 10000000000000000 #len(self.frame_ids)
         self.cfg = cfg
-        self.img_height = cfg['cam']['H']
-        self.img_width = cfg['cam']['W']
-        self.K = np.array([[cfg['cam']['fx'], 0.0, cfg['cam']['cx']],
-                            [0.0, cfg['cam']['fy'], cfg['cam']['cy']],
-                            [0.0,0.0,1.0]])
-        self.fx = cfg['cam']['fx']
-        self.fy = cfg['cam']['fy']
-        self.cx = cfg['cam']['cx']
-        self.cy = cfg['cam']['cy']
-        self.depth_scale = cfg['cam']['png_depth_scale']
+
+        # rgb
+        self.rgb_cam = {
+            'img_height':cfg['rgb_cam']['H'],
+            'img_width': cfg['rgb_cam']['W'],
+            'K': np.array([[cfg['rgb_cam']['fx'], 0.0, cfg['rgb_cam']['cx']],
+                            [0.0, cfg['rgb_cam']['fy'], cfg['rgb_cam']['cy']],
+                            [0.0,0.0,1.0]]),
+            'K_torch': torch.tensor([[cfg['rgb_cam']['fx'], 0.0, cfg['rgb_cam']['cx']],
+                                    [0.0, cfg['rgb_cam']['fy'], cfg['rgb_cam']['cy']],
+                                    [0.0, 0.0, 1.0]])[None],
+            'fx': cfg['rgb_cam']['fx'],
+            'fy': cfg['rgb_cam']['fy'],
+            'cx': cfg['rgb_cam']['cx'],
+            'cy': cfg['rgb_cam']['cy']
+        }
+
+        # depth
+        self.depth_cam = {
+            'img_height':cfg['depth_cam']['H'],
+            'img_width': cfg['depth_cam']['W'],
+            'K': np.array([[cfg['depth_cam']['fx'], 0.0, cfg['depth_cam']['cx']],
+                            [0.0, cfg['depth_cam']['fy'], cfg['depth_cam']['cy']],
+                            [0.0,0.0,1.0]]),
+            'K_torch': torch.tensor([[cfg['depth_cam']['fx'], 0.0, cfg['depth_cam']['cx']],
+                                    [0.0, cfg['depth_cam']['fy'], cfg['depth_cam']['cy']],
+                                    [0.0, 0.0, 1.0]])[None],
+            'fx': cfg['depth_cam']['fx'],
+            'fy': cfg['depth_cam']['fy'],
+            'cx': cfg['depth_cam']['cx'],
+            'cy': cfg['depth_cam']['cy'],
+            'depth_scale': cfg['depth_cam']['png_depth_scale'],
+            'depth_offset': np.array([-0.05, -0.05, 0.0])
+        }
         self.has_depth = has_depth
 
         self.video_id = 'ros' #matches
 
-
         #ROS INITIALIZATION
-        rclpy.init(args=None)
+        # rclpy.init(args=None)
     
         self.node = MultiSensorFusion()
         self.executor = MultiThreadedExecutor()
@@ -356,34 +377,29 @@ class ROSDataset(IterableDataset):
             try:
                 # 
                 data = self.node.get_synced_data(timeout=1.0)
-                
+                print("Got synced data")
                 color_data = data['rgb']
                 depth_data = data['depth']
                 pose = data['pose']
+                print(f"color_data shape: {color_data.shape}, depth_data shape: {depth_data.shape}, pose shape: {pose.shape}")
 
-                
                 color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
-                depth_data = depth_data.astype(np.float32) / self.depth_scale #* self.sc_factor
+                depth_data = depth_data.astype(np.float32) / self.depth_cam['depth_scale'] #* self.sc_factor
 
-                H, W = depth_data.shape
-                color_data = cv2.resize(color_data, (W, H))
+                # H, W = depth_data.shape
+                # color_data = cv2.resize(color_data, (W, H))
 
-                #
                 #Step2:try to warp the data like the original dataset    
                 result = dict(wide=dict())
                 wide = PosedSensorInfo()            
                 
                 # OK, we have a frame. Fill on the requisite data/fields.
                 image_info = ImageMeasurementInfo(
-                    size=(self.img_width, self.img_height),
-                    K=torch.tensor([
-                        [self.fx, 0.0, self.cx],
-                        [0.0, self.fy, self.cy],
-                        [0.0, 0.0, 1.0]
-                    ])[None])
+                    size=(self.rgb_cam['img_width'], self.rgb_cam['img_height']),
+                    K=self.rgb_cam['K_torch']
+                )
 
-
-                image = np.asarray(color_data).reshape((self.img_height, self.img_width, 3))
+                image = np.asarray(color_data).reshape((self.rgb_cam['img_height'], self.rgb_cam['img_width'], 3))
 
                 wide.image = image_info
                 result["wide"]["image"] = torch.tensor(np.moveaxis(image, -1, 0))[None]
@@ -395,26 +411,18 @@ class ROSDataset(IterableDataset):
                 if self.has_depth:
                     # We'll eventually ensure this is 1/4.
                     depth_info = DepthMeasurementInfo(
-                        size=(self.img_width, self.img_height),
-                        K=torch.tensor([
-                            [self.fx  , 0.0, self.cx ],
-                            [0.0, self.fy , self.cy ],
-                            [0.0, 0.0, 1.0]
-                        ])[None])
+                        size=(self.depth_cam['img_width'], self.depth_cam['img_height']),
+                        K=self.depth_cam['K_torch'],
+                    )
 
-                    depth_scale = self.depth_scale
+                    depth_scale = self.depth_cam['depth_scale']
                     wide.depth = depth_info
 
+                    depth_data = cv2.resize(depth_data, (self.depth_cam['img_width'], self.depth_cam['img_height']))  
 
-                    depth_data = cv2.resize(depth_data, (self.img_width, self.img_height))
-
-                    
-
-                    depth = torch.tensor(depth_data.view(dtype=np.float32).reshape((self.img_height, self.img_width)))[None].float()
+                    depth = torch.tensor(depth_data.view(dtype=np.float32).reshape((self.depth_cam['img_height'], self.depth_cam['img_width'])))[None].float()
                     result["wide"]["depth"] = depth
                     
-
-
                     if max(wide.image.size) > MAX_LONG_SIDE:
                         scale_factor = MAX_LONG_SIDE / max(wide.image.size)
                         # scale_factor = 1

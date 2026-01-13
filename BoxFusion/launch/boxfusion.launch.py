@@ -13,7 +13,7 @@ import os
 def generate_launch_description():
     # launch rviz2 with a specific config file
     rviz_config_file = os.path.join(
-        '/home/none/gits/PROJECTS/c-space-stl/ros2_helpers/realsense_rviz.rviz'
+        '/home/none/manipulation_ws/src/BoxFusion/BoxFusion/config/realsense_rviz.rviz'
     )
     rviz_node = Node(
         package='rviz2',
@@ -57,14 +57,23 @@ def generate_launch_description():
     #                       }.items()
     # )
 
-    # tf static transfrom for azure kinect
+    # # tf static transfrom for azure kinect on the tripod
+    # tf_broadcaster_node = Node(
+    #     package='tf2_ros',
+    #     executable='static_transform_publisher',
+    #     name='static_transform_publisher_world_to_kinect',
+    #     arguments=['1.25', '0.08', '0.67', '3.14', '0.78', '0', 'panda/panda_link0', 'camera_base'],
+    #     output='screen'
+    # )
+    # tf static transform for azure kinect on the panda arm
     tf_broadcaster_node = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_transform_publisher_world_to_kinect',
-        arguments=['1.25', '0.08', '0.67', '3.14', '0.78', '0', 'panda/panda_link0', 'camera_base'],
+        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0', 'panda/panda_link8', 'camera_base'],
         output='screen'
     )
+
     # static transform because boxfusion has different camera frame convention than rviz/azure kinect
     # -90 around x, then 90 around z
     tf_broadcaster_node_2 = Node(
@@ -88,10 +97,6 @@ def generate_launch_description():
                           'point_cloud_in_depth_frame': 'true',
                           }.items()
     )
-    # kinect_launch = Node(
-    #     package='azure_kinect_ros_driver',
-    #     executable='azure_kinect_node',
-    # )
 
     return LaunchDescription([
         rviz_node,

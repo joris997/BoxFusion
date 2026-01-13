@@ -1,27 +1,23 @@
 #!/home/none/venvs/boxfusion/bin/python3
-
+import argparse
 import os
+from typing import List
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-import itertools
 import numpy as np
+from pytope import Polytope
 import rerun
 import rerun.blueprint as rrb
 import yaml
 import torch
-import torchvision
 import rclpy
-import sys
 import uuid
-import open3d as o3d
-from pathlib import Path
 from PIL import Image
 import rclpy 
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from tools.utils import * 
 import open_clip 
-import torch.nn.functional as F
 import time
 
 from boxfusion.cubify_transformer import make_cubify_transformer
@@ -31,10 +27,13 @@ from boxfusion.preprocessor import Augmentor, Preprocessor
 
 from boxfusion.box_manager import BoxManager
 from boxfusion.box_fusion import BoxFusion
+from tools.utils import points_in_box, mask_points_in_box
 
-from geometry_msgs.msg import PolygonStamped, Polygon, Point32
 from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
+
+from tools import numpy_to_pc2
+from my_msgs.msg import Box, BoxArray
 
 def text_to_feature(strings, clip_model, device="cuda"):
     tokenized = open_clip.tokenize(strings).to(device)
@@ -45,91 +44,52 @@ def text_to_feature(strings, clip_model, device="cuda"):
 
 # small ros node that publishes the online 3d detection boxes 
 class Online3DNode(Node):
-    def __init__(self):
+    def __init__(self, objects:List[str]=[]):
         super().__init__('online_3d_node')
 
+        # extra objects, predicates from STL, to be detected!
+        self.objects = objects
+
         # create publisher as list of PolygonStamped
-        # self.box_publisher = self.create_publisher(PolygonStamped, 'online_3d_boxes', 10)
-        self.box_publisher = self.create_publisher(MarkerArray, 'online_3d_boxes', 10)
+        self.box_visual_publisher = self.create_publisher(MarkerArray, 'online_3d_boxes', 10)
+        self.box_data_publisher = self.create_publisher(BoxArray, 'online_3d_box_data', 10)
         self.boxes = []
 
-        # self.boxes = {'box': np.random.rand(8,3), 'category': 'None'}
+        # self.boxes = {'polygon_points': np.random.rand(8,3), 'label': 'None'}
         # self.publish_box(self.boxes)
-
-        self.args = {'dataset_path': 'online',
-                'model_path': './models/cutr_rgbd.pth',
-                'config': './config/online.yaml',
-                'clip_path': './models/open_clip_pytorch_model.bin',
-                'seq': 'None',
-                'class_txt': './data/panoptic_categories_nomerge.txt',
-                'every_nth_frame': None,
-                'viz_on_gt_points': True,
-                'device': 'cuda',
-                'video_ids': None,
-                'primed_strings': None,
-                'total_duration': 4}
-
-        dataset_path = self.args['dataset_path']
-        use_cache = False
         
-        if dataset_path.lower() in ["scannet", "ca1m", 'online']:
-            if not os.path.exists(self.args['config']):
-                raise ValueError("Missing config path")
-            else:
-                with open(self.args['config'], 'r') as  f:
-                    self.cfg = yaml.full_load(f)
-            # load the customized sequence if given by the user
-            if self.args['seq'] is not None:
-                if dataset_path.lower()=='ca1m':
-                    if 'example' in self.cfg['data']['datadir']:
-                        current_file_path = os.path.abspath(__file__)
-                        current_dir = os.path.dirname(current_file_path)
-                        self.cfg['data']['datadir'] = os.path.join(current_dir, self.cfg['data']['datadir'])
+        if not os.path.exists('./config/online.yaml'):
+            raise ValueError("Missing config path")
+        else:
+            with open('./config/online.yaml', 'r') as  f:
+                self.cfg = yaml.full_load(f)
+        
+        dataset = get_dataset(self.cfg)
 
-                    else:
-                        new_datadir = os.path.join(os.path.dirname(os.path.dirname(self.cfg['data']['datadir'])),  self.args['seq']+'/')
-                        self.cfg['data']['datadir'] = new_datadir
-
-                    
-                else:
-                    new_datadir = os.path.join(os.path.dirname(os.path.dirname(self.cfg['data']['datadir'])),  self.args['seq']+'/frames/')
-                    self.cfg['data']['datadir'] = new_datadir
-                    
-                # eval only
-                if os.path.exists(os.path.join(self.cfg['data']['output_dir'],self.args['seq']+"_boxes.pkl")) and self.cfg["eval"]:
-                    print("Results for boxes already exist, skip evaluation")
-                    sys.exit(0)
-            
-            dataset = get_dataset(self.cfg)
-
-        assert self.args['model_path'] is not None
-        checkpoint = torch.load(self.args['model_path'], map_location=self.args['device'] or "cpu")["model"]
+        assert self.cfg['model_path'] is not None
+        checkpoint = torch.load(self.cfg['model_path'], map_location=self.cfg['device'] or "cpu")["model"]
         backbone_embedding_dimension = checkpoint["backbone.0.patch_embed.proj.weight"].shape[0]
             
-        is_depth_model = True 
+        is_depth_model = True
         model = make_cubify_transformer(dimension=backbone_embedding_dimension, depth_model=is_depth_model).eval()
         model.load_state_dict(checkpoint)
 
         dataset.load_arkit_depth = True
-        if self.args['every_nth_frame'] is not None:
-            dataset = itertools.islice(dataset, 0, None, self.args['every_nth_frame'])
-
         augmentor = Augmentor(("wide/image", "wide/depth"))
         preprocessor = Preprocessor()
         
-        if self.args['device'] is not None:
-            model = model.to(self.args['device'])
-            clip_model, preprocess = load_clip(self.args['clip_path'])
-            text_class = np.genfromtxt(self.args['class_txt'], delimiter='\n', dtype=str) 
+        if self.cfg['device'] is not None:
+            model = model.to(self.cfg['device'])
+            clip_model, preprocess = load_clip(self.cfg['clip_path'])
+            text_class = np.genfromtxt(self.cfg['class_txt'], delimiter='\n', dtype=str) 
             # print(f"text classes {text_class}")
-            text_features = torch.load('./data/class_features.pt').cuda()
+            text_features = torch.load(self.cfg['class_features']).cuda()
 
-            # extra_strings = ['tangerine', 'cup']
-            extra_strings = ['white cup', 'grey cup', 'black and red cup']
+            # self.objects = ['white cup', 'grey cup', 'black and red cup']
             # append extra_strings to text_class
-            text_class = np.concatenate((text_class, np.array(extra_strings)), axis=0)
+            text_class = np.concatenate((text_class, np.array(self.objects)), axis=0)
             # append extra_strings features to text_features
-            extra_features = text_to_feature(extra_strings, clip_model, device=self.args['device'])
+            extra_features = text_to_feature(self.objects, clip_model, device=self.cfg['device'])
             text_features = torch.cat((text_features, extra_features), dim=0)
             # print(f"my embedding = their embedding?: {text_features[0,:] == text_to_feature([text_class[0]], clip_model, device=args.device)[0,:]}")
             # print("Loaded text features:", text_features.shape)
@@ -138,23 +98,47 @@ class Online3DNode(Node):
                  preprocess, text_class, text_features, augmentor, preprocessor, 
                  gap=25, re_vis=True
         )
+        self.save_boxes()
 
-        # # publish the boxes
-        # print("\n\nPublishing boxes...")
-        # self.publish_boxes(self.boxes)
-        # # for box in self.boxes:
-        # #      print("Publishing box:", box)
-        # #      self.publish_box(box)
-
-    def publish_boxes(self, boxes):
+    def save_boxes(self,save_path:str="results/"):
         """
         boxes: list of dicts
-            [{'box': (8,3) ndarray, 'category': str}, ...]
+            [{'polygon_points': (8,3) ndarray, 'label': str}, ...]
+        xyzrgb: (N,6) ndarray of the point cloud
+        save_path: str
+            path to save the boxes and point cloud
+
+        Save all boxes as {'polygon_points': (8,3) ndarray, 
+                           'cloud_points': (N,6) ndarray, 
+                           'label': str} 
+        """
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+
+        for i, box in enumerate(self.boxes):
+            # make polytope from box corners2
+            label = box['label']
+            poly = Polytope(box['polygon_points'])
+            in_box_points = points_in_box(poly, xyzrgb=self.xyzrgb)
+
+            box_obj = {
+                'polygon_points': box['polygon_points'],
+                'cloud_points': in_box_points,
+                'label': label
+            }
+
+            with open(os.path.join(save_path, f"box_{i}_{label}.pkl"), "wb") as f:
+                pickle.dump(box_obj, f)
+
+    def publish_visual_boxes(self):
+        """
+        boxes: list of dicts
+            [{'polygon_points': (8,3) ndarray, 'label': str}, ...]
         """
 
         marker_array = MarkerArray()
 
-        for i, box in enumerate(boxes):
+        for i, box in enumerate(self.boxes):
             marker = Marker()
             marker.header.frame_id = "panda/panda_link0"
             marker.header.stamp = self.get_clock().now().to_msg()
@@ -170,7 +154,7 @@ class Online3DNode(Node):
             marker.color.b = 0.0
             marker.color.a = 1.0
 
-            corners = box['box']               # (8,3)
+            corners = box['polygon_points']               # (8,3)
 
             edges = [
                 (0,1),(1,2),(2,3),(3,0),
@@ -192,9 +176,62 @@ class Online3DNode(Node):
 
             marker_array.markers.append(marker)
 
-            self.box_publisher.publish(marker_array)
+            self.box_visual_publisher.publish(marker_array)
 
-        
+    def publish_data_boxes(self):
+        box_array_msg = BoxArray()
+        # set header
+        box_array_msg.header.frame_id = "panda/panda_link0"
+        box_array_msg.header.stamp = self.get_clock().now().to_msg()
+
+        for box in self.boxes:
+            box_msg = Box()
+            box_msg.header.stamp = self.get_clock().now().to_msg()
+            box_msg.header.frame_id = "panda/panda_link0"
+
+            # polygon (cheap)
+            for x, y, z in box['polygon_points']:
+                box_msg.polygon_points.append(Point(x=x, y=y, z=z))
+
+            # cloud (fast)
+            mask = mask_points_in_box(Polytope(box['polygon_points']), self.xyzrgb)
+            box_msg.cloud_points = numpy_to_pc2(
+                xyzrgb=self.xyzrgb[mask], 
+                frame_id="panda/panda_link0", 
+                stamp=self.get_clock().now().to_msg()
+            )
+
+            box_msg.label = box['label']
+            box_array_msg.boxes.append(box_msg)
+        for i, box in enumerate(self.boxes):
+            box_msg = Box()
+            # set header
+            box_msg.header.frame_id = "panda/panda_link0"
+            box_msg.header.stamp = self.get_clock().now().to_msg()
+
+            # add box corners
+            for corner in box['polygon_points']:
+                point = Point()
+                point.x = float(corner[0])
+                point.y = float(corner[1])
+                point.z = float(corner[2])
+                box_msg.polygon_points.append(point)
+
+            # add in-box points from the point cloud
+            poly = Polytope(box['polygon_points'])
+            in_box_points = points_in_box(poly, xyzrgb=self.xyzrgb)
+            for pt in in_box_points:
+                point = Point()
+                point.x = float(pt[0])
+                point.y = float(pt[1])
+                point.z = float(pt[2])
+                box_msg.cloud_points.append(point)
+
+            # add label/label
+            box_msg.label = box['label']
+            box_array_msg.boxes.append(box_msg)
+
+        self.box_data_publisher.publish(box_array_msg)
 
     def run(self, 
             model, dataset, clip_model, 
@@ -286,7 +323,7 @@ class Online3DNode(Node):
                 Box_Fuser.update_intrinsics(sample["sensor_info"].wide.image.size,sample["sensor_info"].wide.image.K[-1].numpy()) #size:[W,H]
 
             xyzrgb = None
-            if self.args['viz_on_gt_points'] and sample["sensor_info"].has("gt"):
+            if self.cfg['viz_on_gt_points'] and sample["sensor_info"].has("gt"):
                 # Backproject GT depth to world so we can compare our predictions.
                 depth_gt = sample["wide"]["depth"][-1]
                 matched_image = torch.tensor(np.array(Image.fromarray(image).resize((depth_gt.shape[1], depth_gt.shape[0]))))
@@ -305,14 +342,18 @@ class Online3DNode(Node):
 
                 pred_instances = pred_instances[pred_instances.scores >= float(self.cfg['detection']['score_thresh'])]
     
+                # TODO: active filtering of unwanted boxes 
+                # rejection based on overal size, outside workspace!
                 if self.cfg["detection"]["uv_bound"]:
-                    uv_mask = box_manager.check_uv_bounds(pred_instances.pred_proj_xy,image.shape[1],image.shape[0],ratio=self.cfg["detection"]["uv_bound_value"]) #[N]
+                    uv_mask = box_manager.check_uv_bounds(pred_instances.pred_proj_xy,
+                                                          image.shape[1],image.shape[0],ratio=self.cfg["detection"]["uv_bound_value"]) #[N]
                     pred_instances = pred_instances[uv_mask]
                 if self.cfg["detection"]["floor_mask"]:
-                    floor_mask = box_manager.check_floor_mask(pred_instances.pred_boxes_3d.tensor, ratio=self.cfg["detection"]["floor_ratio"])
+                    floor_mask = box_manager.check_floor_mask(pred_instances.pred_boxes_3d.tensor, 
+                                                              ratio=self.cfg["detection"]["floor_ratio"])
                     pred_instances = pred_instances[~floor_mask]
 
-            # avoid first frame empty predictions
+                # avoid first frame empty predictions
                 if len(pred_instances) == 0 and count ==0:
                     with torch.no_grad():
                         pred_instances = model(packaged)[0]
@@ -483,13 +524,11 @@ class Online3DNode(Node):
 
             count+=1
             elapsed_time = time.time() - start_time
-            if elapsed_time >= self.args['total_duration']:
-                print(f"Reached total duration of {self.args['total_duration']} seconds. Stopping capture.")
-                # rclpy.shutdown()
+            if elapsed_time >= self.cfg['total_duration']:
+                print(f"Reached total duration of {self.cfg['total_duration']} seconds. Stopping capture.")
                 break
             
-        # # save the results
-        # if count == len(dataset)-1 or (count+gap)>len(dataset)-1:
+        # save the results
         end_time = time.time()
         duration = end_time - start_time  
         fps = count / duration
@@ -508,28 +547,38 @@ class Online3DNode(Node):
                 save_list = [[(int(n), (boxes_3d[n]), class_list[class_idx[n]]) for n in range(len(all_pred_box))]] # list of tuples class_idx[n]
                 save_box(save_list, os.path.join(self.cfg['data']['output_dir'], video_id[0]+"_boxes.pkl"))
 
-                self.boxes = [{'box': boxes_3d[n], 'category': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
-                self.publish_boxes(self.boxes)
+                self.boxes = [{'polygon_points': boxes_3d[n], 'label': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
+                self.publish_visual_boxes()
 
             # save the pointcloud, xyzrgb, (numpy object) to pkl
             print("Saving the pointcloud xyzrgb...")
+            self.xyzrgb = xyzrgb
             torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], video_id[0]+'_xyzrgb.pt'))
             
 
 
-def main(args=None):
+def main(args=None, objects:List[str]=None):
     rclpy.init(args=args)
-
-    node = Online3DNode()
+    node = Online3DNode(objects=objects)
 
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    # finally:
-    #     node.get_logger().info("Shutting down online 3D node")
-    #     node.destroy_node()
-    #     rclpy.shutdown()
+    finally:
+        node.get_logger().info("Shutting down online 3D node")
+        node.destroy_node()
+        rclpy.shutdown()
+
+
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Online 3D Node")
+    parser.add_argument('--recipe', default='test', help='recipe/instruction, loads the response file')
+    args = parser.parse_args()
+
+    response_dir = '/home/none/manipulation_ws/src/c_space_stl/cook2stl/results/'
+    with open(os.path.join(response_dir,f"predicates_{args.recipe}.csv"),'r') as f:
+        objects = [line.strip() for line in f.readlines()]
+
+    main(args=None, objects=objects)

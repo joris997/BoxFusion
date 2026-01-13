@@ -1,4 +1,11 @@
 dataset: online
+model_path: ./models/cutr_rgbd.pth
+clip_path: ./models/open_clip_pytorch_model.bin
+class_features: './data/class_features.pt'
+class_txt: ./data/panoptic_categories_nomerge.txt
+viz_on_gt_points: True
+device: cuda
+total_duration: 4
 
 data:
   datadir: /online/
@@ -23,6 +30,7 @@ data:
 #   cx: 319.2763
 #   cy: 235.4929
 #   png_depth_scale: 1000
+
 # Azure Kinect DK
 rgb_cam: # scaled from 2048x1536
   H: 480

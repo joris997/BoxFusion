@@ -14,6 +14,64 @@ from boxfusion.color import random_color_v2
 from boxfusion.capture_stream import ScannetDataset, CA1MDataset, ROSDataset
 import pickle
 import open_clip
+from pytope import Polytope
+from sensor_msgs.msg import PointCloud2, PointField
+import numpy as np
+
+# get the mask of points inside a box
+def mask_points_in_box(box_poly: Polytope,
+                       xyz:np.ndarray=None, 
+                       xyzrgb:np.ndarray=None):
+    assert (xyz is not None) or (xyzrgb is not None), "Either xyz or xyzrgb must be provided."
+    # always create a xyz variable
+    if xyz is None:
+        points = xyzrgb[:,:3]
+    else:
+        points = xyz
+
+    # create a mask of all points which are inside the box
+    Ab = box_poly.get_H_rep()
+    A, b = Ab[0], Ab[1]
+    in_box_mask = np.all(np.dot(points, A.T) <= np.repeat(b, points.shape[0], axis=1).T + 1e-6, axis=1)
+    return in_box_mask
+
+# get points inside a box
+def points_in_box(box_poly: Polytope,
+                  xyz:np.ndarray=None, 
+                  xyzrgb:np.ndarray=None):
+    assert (xyz is not None) or (xyzrgb is not None), "Either xyz or xyzrgb must be provided."
+    in_box_mask = mask_points_in_box(box_poly, xyz, xyzrgb)
+    # return xyz or with rgb depending on input
+    if xyz is None:
+        return xyzrgb[in_box_mask]
+    else:
+        return xyz[in_box_mask]
+
+def numpy_to_pc2(xyzrgb, frame_id, stamp):
+    msg = PointCloud2()
+    msg.header.frame_id = frame_id
+    msg.header.stamp = stamp
+
+    msg.height = 1
+    msg.width = xyzrgb.shape[0]
+    msg.is_dense = True
+    msg.is_bigendian = False
+
+    msg.fields = [
+        PointField(name='x', offset=0,  datatype=PointField.FLOAT32, count=1),
+        PointField(name='y', offset=4,  datatype=PointField.FLOAT32, count=1),
+        PointField(name='z', offset=8,  datatype=PointField.FLOAT32, count=1),
+        PointField(name='r', offset=12, datatype=PointField.FLOAT32, count=1),
+        PointField(name='g', offset=16, datatype=PointField.FLOAT32, count=1),
+        PointField(name='b', offset=20, datatype=PointField.FLOAT32, count=1),
+    ]
+
+    msg.point_step = 24
+    msg.row_step = msg.point_step * msg.width
+    msg.data = xyzrgb.astype(np.float32).tobytes()
+
+    return msg
+
 
 def move_device_like(src: torch.Tensor, dst: torch.Tensor) -> torch.Tensor:
     try:

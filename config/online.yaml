@@ -5,7 +5,7 @@ class_features: './data/class_features.pt'
 class_txt: ./data/panoptic_categories_nomerge.txt
 viz_on_gt_points: True
 device: cuda
-total_duration: 4
+total_duration: 5
 
 data:
   datadir: /online/
@@ -58,7 +58,12 @@ detection:
   uv_bound_value: 0.9
   floor_mask: True #False
   floor_ratio: 15
-  scale_box: 0.75
+  scale_box: 0.9
+  workspace_filter: True
+  workspace:
+    x: [0.0, 1.25]
+    y: [-0.5, 0.5]
+    z: [0.0, 1.0]
 
 association:
   small_threshold: 0.1 #0.2
@@ -82,7 +87,7 @@ box_fusion:
 
 
 vis:
-  rerun: True 
+  rerun: True
   show_class: True 
   show_label: True 
   trajectory: True

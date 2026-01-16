@@ -18,6 +18,7 @@ setup(
         (os.path.join('share', package_name), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
     ],
     install_requires=['setuptools'],
+    include_package_data=True,
     zip_safe=True,
     maintainer='jorisv',
     maintainer_email='jorisv@kth.se',

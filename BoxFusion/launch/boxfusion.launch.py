@@ -9,6 +9,7 @@ from launch.actions import IncludeLaunchDescription, DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 import os
+import numpy as np
 
 def generate_launch_description():
     # launch rviz2 with a specific config file
@@ -65,18 +66,28 @@ def generate_launch_description():
     #     arguments=['1.25', '0.08', '0.67', '3.14', '0.78', '0', 'panda/panda_link0', 'camera_base'],
     #     output='screen'
     # )
+
+
     # tf static transform for azure kinect on the panda arm
-    tf_broadcaster_node = Node(
+    tf_broadcaster_node_1 = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
-        name='static_transform_publisher_world_to_kinect',
-        arguments=['0.0', '0.0', '0.0', '0.0', '0.0', '0', 'panda/panda_link8', 'camera_base'],
+        name='static_transform_publisher_align_frame_8',
+        arguments=['0.0', '0.0', '0.0', '0.0', str(np.deg2rad(-90)), str(np.deg2rad(180-45)), 'panda/panda_link8', 'link8_aligned'],
+        output='screen'
+    )
+
+    tf_broadcaster_node_2 = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='static_transform_publisher_frame_8_to_kinect_base',
+        arguments=['0.035', '0.0', '0.11', str(np.deg2rad(2)), str(np.deg2rad(-17)), '0.0', 'link8_aligned', 'camera_base'],
         output='screen'
     )
 
     # static transform because boxfusion has different camera frame convention than rviz/azure kinect
     # -90 around x, then 90 around z
-    tf_broadcaster_node_2 = Node(
+    tf_broadcaster_node_3 = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
         name='static_transform_publisher_kinect_adjustment',
@@ -100,8 +111,9 @@ def generate_launch_description():
 
     return LaunchDescription([
         rviz_node,
-        tf_broadcaster_node,
+        tf_broadcaster_node_1,
         tf_broadcaster_node_2,
+        tf_broadcaster_node_3,
         # realsense_launch,
         kinect_launch,
     ])

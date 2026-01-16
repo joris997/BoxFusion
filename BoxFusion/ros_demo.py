@@ -14,7 +14,6 @@ import rclpy
 import uuid
 from PIL import Image
 import rclpy 
-from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from tools.utils import * 
@@ -45,17 +44,11 @@ def text_to_feature(strings, clip_model, device="cuda"):
 
 # small ros node that publishes the online 3d detection boxes 
 class Online3DNode(Node):
-    def __init__(self, recipe:str=None):
+    def __init__(self, objects:List[str]=[]):
         super().__init__('online_3d_node')
 
         # extra objects, predicates from STL, to be detected!
-        self.recipe = recipe
-        self.objects:List[str] = []
-        if self.recipe is not None:
-            response_dir = '/home/none/manipulation_ws/src/c_space_stl/cook2stl/results/'
-            with open(os.path.join(response_dir,f"predicates_{self.recipe}.csv"),'r') as f:
-                self.objects = [line.strip() for line in f.readlines()]
-        print("Extra objects to be detected:", self.objects)
+        self.objects = objects
 
         # create publisher as list of PolygonStamped
         self.box_visual_publisher = self.create_publisher(MarkerArray, 'online_3d_boxes', 10)
@@ -103,9 +96,9 @@ class Online3DNode(Node):
         
         self.run(model, dataset, clip_model, 
                  preprocess, text_class, text_features, augmentor, preprocessor, 
-                 gap=25, re_vis=self.cfg['vis']['rerun']
+                 gap=25, re_vis=True
         )
-        self.save_boxes(save_path=f"results/{self.recipe}/")
+        self.save_boxes()
 
     def save_boxes(self,save_path:str="results/"):
         """
@@ -119,8 +112,6 @@ class Online3DNode(Node):
                            'cloud_points': (N,6) ndarray, 
                            'label': str} 
         """
-        print("Saving boxes to:", save_path)
-
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
@@ -144,9 +135,9 @@ class Online3DNode(Node):
         boxes: list of dicts
             [{'polygon_points': (8,3) ndarray, 'label': str}, ...]
         """
-        print("Publishing visual boxes...")
 
         marker_array = MarkerArray()
+
         for i, box in enumerate(self.boxes):
             marker = Marker()
             marker.header.frame_id = "panda/panda_link0"
@@ -298,7 +289,6 @@ class Online3DNode(Node):
 
         box_count = 0
         start_time = time.time()
-        print(f"STARTING TIMING")
         
         for sample in dataset:
             sample_video_id = sample["meta"]["video_id"] #(['sensor_info', 'wide', 'gt', 'meta'])
@@ -363,6 +353,14 @@ class Online3DNode(Node):
                     floor_mask = box_manager.check_floor_mask(pred_instances.pred_boxes_3d.tensor, 
                                                               ratio=self.cfg["detection"]["floor_ratio"])
                     pred_instances = pred_instances[~floor_mask]
+                if self.cfg["detection"]["workspace_filter"]:
+                    workspace_mask = box_manager.check_workspace_filter(
+                        pred_instances.pred_boxes_3d.center.tensor,
+                        x_range=self.cfg["detection"]["workspace"]["x"],
+                        y_range=self.cfg["detection"]["workspace"]["y"],
+                        z_range=self.cfg["detection"]["workspace"]["z"]
+                    )
+                    pred_instances = pred_instances[workspace_mask]
 
                 # avoid first frame empty predictions
                 if len(pred_instances) == 0 and count ==0:
@@ -389,6 +387,7 @@ class Online3DNode(Node):
                 rerun.log("/device/wide/image", color_camera)
             traj_xyz.append(RT[:3, 3])
                 
+
             if is_depth_model and re_vis:
                 rerun.log("/device/wide/depth", rerun.DepthImage(sample["wide"]["depth"][-1].numpy()))
                 rerun.log("/device/wide/depth", depth_camera)
@@ -545,22 +544,11 @@ class Online3DNode(Node):
         print(f"Cost: {duration:.2f} s", f"Average FPS: {fps:.2f}")
         
         # save global boxes for evaluation
-        boxes_3d = all_pred_box.pred_boxes_3d.corners.cpu().numpy() # [N,8,3]
-        print(f"centers after the loop: {all_pred_box.pred_boxes_3d.center}")
-        if self.cfg["detection"]["workspace_filter"]:
-            workspace_mask = box_manager.check_workspace_filter(
-                all_pred_box.pred_boxes_3d.center,
-                x_range=self.cfg["detection"]["workspace"]["x"],
-                y_range=self.cfg["detection"]["workspace"]["y"],
-                z_range=self.cfg["detection"]["workspace"]["z"]
-            ).cpu()
-            all_pred_box = all_pred_box[workspace_mask]
-            boxes_3d = boxes_3d[workspace_mask]
-
-
-        class_list = tokenized_text.tolist()
-        class_idx = np.array([class_list.index(c) for c in all_pred_box.categories]) #[N]
         if self.cfg['data']['output_dir'] is not None:# and self.cfg["eval"]:
+            class_list = tokenized_text.tolist()
+            class_idx = np.array([class_list.index(c) for c in all_pred_box.categories]) #[N]
+
+            boxes_3d = all_pred_box.pred_boxes_3d.corners.cpu().numpy() # [N,8,3]
             if self.cfg['dataset'] == 'scannet':
                 boxes_3d = post_process(boxes_3d)
                 
@@ -568,25 +556,31 @@ class Online3DNode(Node):
                 save_list = [[(int(n), (boxes_3d[n]), class_list[class_idx[n]]) for n in range(len(all_pred_box))]] # list of tuples class_idx[n]
                 save_box(save_list, os.path.join(self.cfg['data']['output_dir'], video_id[0]+"_boxes.pkl"))
 
+                self.boxes = [{'polygon_points': boxes_3d[n], 'label': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
+                self.publish_visual_boxes()
+
             # save the pointcloud, xyzrgb, (numpy object) to pkl
             print("Saving the pointcloud xyzrgb...")
             self.xyzrgb = xyzrgb
             torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], video_id[0]+'_xyzrgb.pt'))
-        
-        self.boxes = [{'polygon_points': boxes_3d[n], 'label': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
-        self.publish_visual_boxes()
-            
 
-
-def main(args=None, recipe:str=None):
-    rclpy.init(args=args)
-    node = Online3DNode(recipe=recipe)
+def main(args=None, objects:List[str]=None):
+    import argparse
     
-    executor = MultiThreadedExecutor(num_threads=4)
-    executor.add_node(node)
-
+    # Only parse args if objects is not provided
+    if objects is None:
+        parser = argparse.ArgumentParser(description="Online 3D Node")
+        parser.add_argument('--recipe', default='test', help='recipe/instruction, loads the response file')
+        parsed_args = parser.parse_args()
+        
+        response_dir = '/home/none/manipulation_ws/src/c_space_stl/cook2stl/results/'
+        with open(os.path.join(response_dir, f"predicates_{parsed_args.recipe}.csv"), 'r') as f:
+            objects = [line.strip() for line in f.readlines()]
+    
+    rclpy.init(args=args)
+    node = Online3DNode(objects=objects)
     try:
-        executor.spin()
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
@@ -594,13 +588,5 @@ def main(args=None, recipe:str=None):
         node.destroy_node()
         rclpy.shutdown()
 
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Online 3D Node")
-    parser.add_argument('--recipe', default='test', help='recipe/instruction, loads the response file')
-    args = parser.parse_args()
-
-    
-
-    main(args=None, recipe=args.recipe)
+    main()

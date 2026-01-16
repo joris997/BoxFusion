@@ -30,6 +30,7 @@ from boxfusion.sensor import SensorArrayInfo, SensorInfo, PosedSensorInfo
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from sensor_msgs.msg import Image
 from geometry_msgs.msg import TransformStamped
 from tf2_ros import Buffer, TransformListener
@@ -100,8 +101,233 @@ def get_camera_to_gravity_transform(pose, current, target=ImageOrientation.UPRIG
 MAX_LONG_SIDE = 1024
 
 
+# class MultiSensorFusion(Node):
 
+#     def __init__(self):
+#         super().__init__('multi_sensor_fusion_node')
+        
+#         # 1. 
+#         self.frame_count = 0
+#         self.last_log_time = time.time()
+        
+#         # 2. 
+#         self.bridge = cv_bridge.CvBridge()
+        
+#         # 3. 
+#         self.rgb_queue = queue.Queue(maxsize=100)
+#         self.depth_queue = queue.Queue(maxsize=100)
+#         self.pose_queue = queue.Queue(maxsize=100)
+#         self.result_queue = queue.Queue(maxsize=100) 
+        
+#         self.last_rgb_put_time = 0  # 
+#         self.last_depth_put_time = 0  
+#         self.last_pose_put_time = 0  # 
+#         self.last_pose_put_time = 0  # 
+#         self.MIN_INTERVAL = 0.05  # 
 
+#         # 4. 
+#         self.tf_buffer = Buffer(cache_time=rclpy.time.Duration(seconds=10))
+#         self.tf_listener = TransformListener(self.tf_buffer, self)
+#         self.source_frame = 'panda/panda_link0'#'camera_color_optical_frame'
+#         self.target_frame = 'camera_base_boxfusion'#'camera_panda_boxfusion'#'camera_link'
+        
+#         # 5. 
+#         self.rgb_sub = self.create_subscription(
+#             # Image, '/camera/camera/color/image_raw', self.rgb_callback, 5)  # QoS=5
+#             Image, '/rgb/image_raw', self.rgb_callback, 5)  # QoS=5
+        
+#         self.depth_sub = self.create_subscription(
+#             # Image, '/camera/camera/depth/image_rect_raw', self.depth_callback, 5)
+#             Image, '/depth_to_rgb/image_raw', self.depth_callback, 5)
+        
+#         # Publishers
+#         self.pointcloud_pub = self.create_publisher(
+#             PointCloud2, '/camera/pointcloud', 10)
+
+#         self.get_logger().info("🚀 start")
+
+#         # ... existing initialization ...
+        
+#         # Add a processing thread
+#         self.processing_thread = None
+#         self.processing_active = True
+        
+#         # Change sync_timer to just check queues, not do heavy processing
+#         # self.sync_timer = self.create_timer(0.033, self.check_and_queue_data)  # 30Hz
+        
+#         # Start processing thread
+#         self.processing_thread = threading.Thread(target=self.processing_loop)
+#         self.processing_thread.start()
+
+#         # 6. 
+#         self.pose_timer = self.create_timer(0.02, self.pose_update)  # 50Hz
+        
+#         # 7. 
+#         self.sync_timer = self.create_timer(0.033, self.check_and_queue_data)  # 30Hz
+#         self.data_callback = None  #
+
+#     def rgb_callback(self, msg):
+#         # print("RGB callback")
+#         current_time = time.monotonic()
+#         if current_time - self.last_rgb_put_time < self.MIN_INTERVAL:
+#             return  
+#         try:
+            
+#             cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+#             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+#             self.rgb_queue.put((timestamp, cv_image), timeout=0.001)
+#             self.last_rgb_put_time = current_time  # 
+#         except Exception as e:
+#             self.get_logger().warn(f"RGB error: {str(e)}")
+
+#     def depth_callback(self, msg):
+#         print("Depth callback")
+#         current_time = time.monotonic()
+#         if current_time - self.last_depth_put_time < self.MIN_INTERVAL:
+#             return  # 
+#         try:
+#             depth_image = self.bridge.imgmsg_to_cv2(msg, 'passthrough')
+#             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
+#             self.depth_queue.put((timestamp, depth_image), timeout=0.001)
+#             self.last_depth_put_time = current_time
+#         except Exception as e:
+#             self.get_logger().warn(f"error: {str(e)}")
+
+#     def pose_update(self):
+#         current_time = time.monotonic()
+#         if current_time - self.last_pose_put_time < self.MIN_INTERVAL:
+#             return  # skip
+#         try:
+#             if self.tf_buffer.can_transform(
+#                 self.source_frame, 
+#                 self.target_frame, 
+#                 rclpy.time.Time()
+#             ):
+#                 transform = self.tf_buffer.lookup_transform(
+#                     self.source_frame,
+#                     self.target_frame,
+#                     self.get_clock().now(),
+#                     timeout=rclpy.time.Duration(seconds=0.05)
+#                 )
+                
+
+#                 translation = transform.transform.translation
+#                 rotation = transform.transform.rotation
+#                 pose_matrix = self._quaternion_to_matrix(
+#                     translation.x, translation.y, translation.z,
+#                     rotation.x, rotation.y, rotation.z, rotation.w
+#                 )
+                
+
+#                 stamp = transform.header.stamp
+#                 timestamp = stamp.sec * 10**9 + stamp.nanosec
+                
+#                 # print(f"Pose timestamp: {timestamp}")
+#                 self.pose_queue.put((timestamp, pose_matrix), timeout=0.001)
+#                 self.last_pose_put_time = current_time
+#         except (TransformException, queue.Full) as e:
+#             pass
+    
+#     def _quaternion_to_matrix(self, x, y, z, qx, qy, qz, qw):
+#         rot = Rotation.from_quat([qx, qy, qz, qw])
+#         rotation_matrix = rot.as_matrix()
+        
+#         pose_matrix = np.eye(4)
+#         pose_matrix[:3, :3] = rotation_matrix
+#         pose_matrix[0, 3] = x
+#         pose_matrix[1, 3] = y
+#         pose_matrix[2, 3] = z
+#         return pose_matrix
+
+#     def check_and_queue_data(self):
+#         """Lightweight method that just synchronizes data - runs at 30Hz"""
+#         print(f"rgb_queue size: {self.rgb_queue.qsize()}, depth_queue size: {self.depth_queue.qsize()}, pose_queue size: {self.pose_queue.qsize()}")
+#         try:
+#             # 1. Get data from queues
+#             rgb_stamp, rgb_data = self.rgb_queue.get(timeout=0.01)
+#             depth_stamp, depth_data = self.depth_queue.get(timeout=0.01)
+            
+#             # 2. Resize
+#             rgb_data = cv2.resize(rgb_data, (640, 480))
+#             depth_data = cv2.resize(depth_data, (640, 480), interpolation=cv2.INTER_NEAREST)
+            
+#             # 3. Find closest pose
+#             closest_pose = None
+#             min_time_diff = float('inf')
+#             MAX_TIME_DIFF = 50 * 1e6  # 50ms
+            
+#             pose_items = []
+#             while not self.pose_queue.empty():
+#                 pose_stamp, pose_matrix = self.pose_queue.get()
+#                 pose_items.append((pose_stamp, pose_matrix))
+                
+#                 time_diff = abs(pose_stamp - rgb_stamp)
+#                 if time_diff < min_time_diff and time_diff < MAX_TIME_DIFF:
+#                     min_time_diff = time_diff
+#                     closest_pose = pose_matrix
+#                     pose_stamp_match = pose_stamp
+            
+#             # Put unmatched poses back
+#             for item in pose_items:
+#                 if item[0] != pose_stamp_match:
+#                     self.pose_queue.put(item)
+            
+#             if closest_pose is None:
+#                 return
+            
+#             # Put synchronized data in result queue for processing thread
+#             try:
+#                 self.result_queue.put({
+#                     'rgb': rgb_data,
+#                     'depth': depth_data,
+#                     'pose': closest_pose
+#                 }, timeout=0.001)
+#             except queue.Full:
+#                 self.get_logger().warn("Result queue full, skipping frame")
+                
+#         except queue.Empty:
+#             pass
+
+#     def processing_loop(self):
+#         """Runs in separate thread to handle heavy processing"""
+#         while self.processing_active:
+#             try:
+#                 data = self.result_queue.get(timeout=0.1)
+#                 self.process_fusion_data(data['rgb'], data['depth'], data['pose'])
+#             except queue.Empty:
+#                 continue
+#             except Exception as e:
+#                 self.get_logger().error(f"Processing error: {str(e)}")
+
+#     def process_fusion_data(self, rgb, depth, pose):
+#         """
+#         This now just stores the data - actual heavy processing happens elsewhere
+#         rgb: [H, W, 3] numpy
+#         depth: [H, W] numpy (dtype=uint16)
+#         pose: [4, 4] numpy(dtype=float64)
+#         """
+#         # Frame counting
+#         self.frame_count += 1
+#         current_time = time.time()
+        
+#         if current_time - self.last_log_time >= 1.0:
+#             fps = self.frame_count / (current_time - self.last_log_time)
+#             self.get_logger().info(f"FPS: {fps:.2f}")
+#             self.frame_count = 0
+#             self.last_log_time = current_time
+        
+#         # Data is already in result_queue, ready to be consumed
+#         # The get_synced_data method will retrieve it
+
+#     def get_synced_data(self, timeout=1.0):
+#         """This now gets data that's already been synchronized"""
+#         return self.result_queue.get(timeout=timeout)
+
+#     def __del__(self):
+#         """Cleanup when node is destroyed"""
+#         self.processing_active = False
+#         if self.processing_thread:
+#             self.processing_thread.join()
 
 class MultiSensorFusion(Node):
     def __init__(self):
@@ -115,10 +341,10 @@ class MultiSensorFusion(Node):
         self.bridge = cv_bridge.CvBridge()
         
         # 3. 
-        self.rgb_queue = queue.Queue(maxsize=200)
-        self.depth_queue = queue.Queue(maxsize=200)
-        self.pose_queue = queue.Queue(maxsize=200)
-        self.result_queue = queue.Queue(maxsize=200) 
+        self.rgb_queue = queue.LifoQueue(maxsize=200)
+        self.depth_queue = queue.LifoQueue(maxsize=200)
+        self.pose_queue = queue.LifoQueue(maxsize=200)
+        self.result_queue = queue.LifoQueue(maxsize=200) 
         
         self.last_rgb_put_time = 0  # 
         self.last_depth_put_time = 0  
@@ -132,24 +358,28 @@ class MultiSensorFusion(Node):
         self.source_frame = 'panda/panda_link0'#'camera_color_optical_frame'
         self.target_frame = 'camera_base_boxfusion'#'camera_panda_boxfusion'#'camera_link'
         
-        # 5. 
+        # 5a
+        self.timer_group = MutuallyExclusiveCallbackGroup()
+        self.subscriber_group = MutuallyExclusiveCallbackGroup()
+
+        # 5b
         self.rgb_sub = self.create_subscription(
             # Image, '/camera/camera/color/image_raw', self.rgb_callback, 5)  # QoS=5
-            Image, '/rgb/image_raw', self.rgb_callback, 5)  # QoS=5
+            Image, '/rgb/image_raw', self.rgb_callback, 5, callback_group=self.subscriber_group)  # QoS=5
         
         self.depth_sub = self.create_subscription(
             # Image, '/camera/camera/depth/image_rect_raw', self.depth_callback, 5)
-            Image, '/depth_to_rgb/image_raw', self.depth_callback, 5)
+            Image, '/depth_to_rgb/image_raw', self.depth_callback, 5, callback_group=self.subscriber_group)
         
         # Publishers
         self.pointcloud_pub = self.create_publisher(
             PointCloud2, '/camera/pointcloud', 10)
 
         # 6. 
-        self.pose_timer = self.create_timer(0.02, self.pose_update)  # 50Hz
+        self.pose_timer = self.create_timer(0.02, self.pose_update, callback_group=self.timer_group)  # 50Hz
         
         # 7. 
-        self.sync_timer = self.create_timer(0.033, self.process_synced_data)  # 30Hz
+        self.sync_timer = self.create_timer(0.02, self.process_synced_data, callback_group=self.timer_group)  # 30Hz
         self.data_callback = None  #
 
         self.get_logger().info("🚀 start")
@@ -186,6 +416,7 @@ class MultiSensorFusion(Node):
             self.get_logger().warn(f"error: {str(e)}")
 
     def pose_update(self):
+        # print("Pose update")
         current_time = time.monotonic()
         if current_time - self.last_pose_put_time < self.MIN_INTERVAL:
             return  # skip
@@ -292,6 +523,7 @@ class MultiSensorFusion(Node):
         position = pose[:3, 3]
         rotation = pose[:3, :3]
         try:
+            print("Putting synced data into result queue")
             self.result_queue.put({
                 'rgb': rgb,
                 'depth': depth,
@@ -358,7 +590,7 @@ class ROSDataset(IterableDataset):
         # rclpy.init(args=None)
     
         self.node = MultiSensorFusion()
-        self.executor = MultiThreadedExecutor()
+        self.executor = MultiThreadedExecutor(num_threads=8)
         self.executor.add_node(self.node)
         
         # 

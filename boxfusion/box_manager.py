@@ -235,5 +235,15 @@ class BoxManager:
         second_mask = (max_values/min_values > ratio/2) & (max_values/second_values > ratio/2) & (second_values/min_values<2.0) & (second_values<0.15) & (min_values<0.15)
         mask = mask | second_mask
         return mask #.astype(int)
+    
+    def check_workspace_filter(self, box_center, x_range, y_range, z_range):
+        # reject boxes where the center is outside the defined workspace
+        # input: box_center [N, 3] tensor
+        x_mask = (box_center[:, 0] >= x_range[0]) & \
+                    (box_center[:, 0] <= x_range[1]) 
+        y_mask = (box_center[:, 1] >= y_range[0]) & \
+                    (box_center[:, 1] <= y_range[1]) 
+        z_mask = (box_center[:, 2] >= z_range[0]) & \
+                    (box_center[:, 2] <= z_range[1]) 
 
-   
+        return x_mask & y_mask & z_mask

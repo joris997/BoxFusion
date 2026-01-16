@@ -8,7 +8,7 @@ device: cuda
 total_duration: 5
 
 data:
-  datadir: /online/
+  datadir: ~/c_space_stl_results/BoxFusion/
   start: 0 
   output_dir: ./results
   gap: 25

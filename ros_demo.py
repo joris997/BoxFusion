@@ -52,7 +52,7 @@ class Online3DNode(Node):
         self.recipe = recipe
         self.objects:List[str] = []
         if self.recipe is not None:
-            response_dir = '/home/none/manipulation_ws/src/c_space_stl/cook2stl/results/'
+            response_dir = '~/c_space_stl_results/cook2stl/'
             with open(os.path.join(response_dir,f"predicates_{self.recipe}.csv"),'r') as f:
                 self.objects = [line.strip() for line in f.readlines()]
         print("Extra objects to be detected:", self.objects)
@@ -70,6 +70,7 @@ class Online3DNode(Node):
         else:
             with open('./config/online.yaml', 'r') as  f:
                 self.cfg = yaml.full_load(f)
+        self.cfg['data']['output_dir'] = os.path.join(self.cfg['data']['output_dir'],self.recipe)
         
         dataset = get_dataset(self.cfg)
 
@@ -105,9 +106,11 @@ class Online3DNode(Node):
                  preprocess, text_class, text_features, augmentor, preprocessor, 
                  gap=25, re_vis=self.cfg['vis']['rerun']
         )
-        self.save_boxes(save_path=f"results/{self.recipe}/")
+        self.save_boxes(save_path=self.cfg['data']['output_dir'])
 
-    def save_boxes(self,save_path:str="results/"):
+    def save_boxes(self,save_path:str=None):
+        if save_path is None:
+            save_path = self.cfg['data']['output_dir']
         """
         boxes: list of dicts
             [{'polygon_points': (8,3) ndarray, 'label': str}, ...]
@@ -566,12 +569,12 @@ class Online3DNode(Node):
                 
             if boxes_3d.shape[0]>0:
                 save_list = [[(int(n), (boxes_3d[n]), class_list[class_idx[n]]) for n in range(len(all_pred_box))]] # list of tuples class_idx[n]
-                save_box(save_list, os.path.join(self.cfg['data']['output_dir'], video_id[0]+"_boxes.pkl"))
+                save_box(save_list, os.path.join(self.cfg['data']['output_dir'], "boxes.pkl"))
 
             # save the pointcloud, xyzrgb, (numpy object) to pkl
             print("Saving the pointcloud xyzrgb...")
             self.xyzrgb = xyzrgb
-            torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], video_id[0]+'_xyzrgb.pt'))
+            torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], 'xyzrgb.pt'))
         
         self.boxes = [{'polygon_points': boxes_3d[n], 'label': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
         self.publish_visual_boxes()
@@ -598,7 +601,7 @@ def main(args=None, recipe:str=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Online 3D Node")
-    parser.add_argument('--recipe', default='test', help='recipe/instruction, loads the response file')
+    parser.add_argument('--recipe', default='none', help='recipe/instruction, loads the response file')
     args = parser.parse_args()
 
     

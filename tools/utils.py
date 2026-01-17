@@ -1,3 +1,5 @@
+import os
+from typing import List
 import numpy as np
 import rerun
 import rerun.blueprint as rrb
@@ -38,7 +40,7 @@ def mask_points_in_box(box_poly: Polytope,
 # get points inside a box
 def points_in_box(box_poly: Polytope,
                   xyz:np.ndarray=None, 
-                  xyzrgb:np.ndarray=None):
+                  xyzrgb:np.ndarray=None)->np.ndarray:
     assert (xyz is not None) or (xyzrgb is not None), "Either xyz or xyzrgb must be provided."
     in_box_mask = mask_points_in_box(box_poly, xyz, xyzrgb)
     # return xyz or with rgb depending on input
@@ -535,3 +537,14 @@ def text_prompt(boxes, class_prompt, text_features, img_path, clip_model, prepro
     categories = class_prompt[max_id]
 
     return  categories, img_features
+
+def get_objects_from_predicate_file(
+        recipe:str,
+        results_folder:str='~/c_space_stl_results')->List[str]:
+    objects:List[str] = []
+    if recipe is not None:
+        response_dir = os.path.join(os.path.expanduser(results_folder),recipe)
+        with open(os.path.join(response_dir,f"predicates.csv"),'r') as f:
+            objects = [line.strip() for line in f.readlines()]
+    print("Extra objects to be detected:", objects)
+    return objects

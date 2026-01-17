@@ -34,6 +34,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from geometry_msgs.msg import Point
 
 from tools.utils import numpy_to_pc2
+from tools.utils import get_objects_from_predicate_file
 from my_msgs.msg import Box, BoxArray
 
 def text_to_feature(strings, clip_model, device="cuda"):
@@ -50,11 +51,7 @@ class Online3DNode(Node):
 
         # extra objects, predicates from STL, to be detected!
         self.recipe = recipe
-        self.objects:List[str] = []
-        if self.recipe is not None:
-            response_dir = '~/c_space_stl_results/cook2stl/'
-            with open(os.path.join(response_dir,f"predicates_{self.recipe}.csv"),'r') as f:
-                self.objects = [line.strip() for line in f.readlines()]
+        self.objects = get_objects_from_predicate_file(recipe)
         print("Extra objects to be detected:", self.objects)
 
         # create publisher as list of PolygonStamped
@@ -107,6 +104,10 @@ class Online3DNode(Node):
                  gap=25, re_vis=self.cfg['vis']['rerun']
         )
         self.save_boxes(save_path=self.cfg['data']['output_dir'])
+        # obtain boxes that have not been detected
+        not_detected = [obj for obj in self.objects if obj not in [box['label'] for box in self.boxes]]
+        self.get_logger().warning(f"Not detected objects: {not_detected}")
+        self.get_logger().warning(f"Either run again or define them yourself! (see manual_boxes.py)")
 
     def save_boxes(self,save_path:str=None):
         if save_path is None:

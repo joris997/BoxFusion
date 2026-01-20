@@ -133,6 +133,13 @@ class Online3DNode(Node):
         for i, box in enumerate(self.boxes):
             # make polytope from box corners2
             label = box['label']
+            polygon_points = box['polygon_points']
+            # get the midway height z value
+            mid_z = (np.max(polygon_points[:,2]) + np.min(polygon_points[:,2])) / 2.0
+            # select only indices with z value greater than mid_z
+            # and add a small margin to the top face. We don't stack stuff
+            polygon_points[polygon_points[:,2]>mid_z, 2] += 0.05
+            
             poly = Polytope(box['polygon_points'])
             in_box_points = points_in_box(poly, xyzrgb=self.xyzrgb)
 
@@ -145,15 +152,18 @@ class Online3DNode(Node):
             with open(os.path.join(save_path, f"box_{i}_{label}.pkl"), "wb") as f:
                 pickle.dump(box_obj, f)
 
-    def publish_visual_boxes(self):
+    def publish_visual_boxes(self, boxes:List[dict]=None):
         """
         boxes: list of dicts
             [{'polygon_points': (8,3) ndarray, 'label': str}, ...]
         """
         print("Publishing visual boxes...")
 
+        if boxes is not None:
+            boxes = self.boxes
+
         marker_array = MarkerArray()
-        for i, box in enumerate(self.boxes):
+        for i, box in enumerate(boxes):
             marker = Marker()
             marker.header.frame_id = "panda/panda_link0"
             marker.header.stamp = self.get_clock().now().to_msg()
@@ -192,61 +202,6 @@ class Online3DNode(Node):
             marker_array.markers.append(marker)
 
             self.box_visual_publisher.publish(marker_array)
-
-    def publish_data_boxes(self):
-        box_array_msg = BoxArray()
-        # set header
-        box_array_msg.header.frame_id = "panda/panda_link0"
-        box_array_msg.header.stamp = self.get_clock().now().to_msg()
-
-        for box in self.boxes:
-            box_msg = Box()
-            box_msg.header.stamp = self.get_clock().now().to_msg()
-            box_msg.header.frame_id = "panda/panda_link0"
-
-            # polygon (cheap)
-            for x, y, z in box['polygon_points']:
-                box_msg.polygon_points.append(Point(x=x, y=y, z=z))
-
-            # cloud (fast)
-            mask = mask_points_in_box(Polytope(box['polygon_points']), self.xyzrgb)
-            box_msg.cloud_points = numpy_to_pc2(
-                xyzrgb=self.xyzrgb[mask], 
-                frame_id="panda/panda_link0", 
-                stamp=self.get_clock().now().to_msg()
-            )
-
-            box_msg.label = box['label']
-            box_array_msg.boxes.append(box_msg)
-        for i, box in enumerate(self.boxes):
-            box_msg = Box()
-            # set header
-            box_msg.header.frame_id = "panda/panda_link0"
-            box_msg.header.stamp = self.get_clock().now().to_msg()
-
-            # add box corners
-            for corner in box['polygon_points']:
-                point = Point()
-                point.x = float(corner[0])
-                point.y = float(corner[1])
-                point.z = float(corner[2])
-                box_msg.polygon_points.append(point)
-
-            # add in-box points from the point cloud
-            poly = Polytope(box['polygon_points'])
-            in_box_points = points_in_box(poly, xyzrgb=self.xyzrgb)
-            for pt in in_box_points:
-                point = Point()
-                point.x = float(pt[0])
-                point.y = float(pt[1])
-                point.z = float(pt[2])
-                box_msg.cloud_points.append(point)
-
-            # add label/label
-            box_msg.label = box['label']
-            box_array_msg.boxes.append(box_msg)
-
-        self.box_data_publisher.publish(box_array_msg)
 
     def run(self, 
             model, dataset, clip_model, 

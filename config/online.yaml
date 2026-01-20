@@ -5,12 +5,14 @@ class_features: './data/class_features.pt'
 class_txt: ./data/panoptic_categories_nomerge.txt
 viz_on_gt_points: True
 device: cuda
-total_duration: 5
+total_duration: 10
+
+recipe: test2
 
 data:
-  datadir: ~/c_space_stl_results/BoxFusion/
+  datadir: /home/none/c_space_stl_results/
   start: 0 
-  output_dir: ./results
+  output_dir: /home/none/c_space_stl_results/
   gap: 25
 
 
@@ -53,20 +55,20 @@ depth_cam: # scaled from 1024x1024
   png_depth_scale: 1000.0
 
 detection:
-  score_thresh: 0.4 #0.4 #0.25
+  score_thresh: 0.2 #0.4 #0.25
   uv_bound: True
   uv_bound_value: 0.9
   floor_mask: True #False
   floor_ratio: 15
-  scale_box: 0.9
+  scale_box: 1.0
   workspace_filter: True
   workspace:
-    x: [0.0, 1.25]
+    x: [0.0, 1.0]
     y: [-0.5, 0.5]
     z: [0.0, 1.0]
 
 association:
-  small_threshold: 0.1 #0.2
+  small_threshold: 0.2 #0.2
   rotation_gap: 30 #30
   translation_gap: 0.8 #1.0 #0.8 #0.5 #0.5 best #1.0 #0.1
 

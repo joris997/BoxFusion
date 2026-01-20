@@ -43,8 +43,8 @@ def main(args=None, recipe:str=None):
     if recipe == "test":
         # need to create 'box_1_red_square'
         # state-space points
-        polygon_points = create_box_c_s(center=[0.5,-0.25,0.05],
-                                        size=[0.1,0.1,0.1])
+        polygon_points = create_box_c_s(center=[0.5,-0.25,0.1],
+                                        size=[0.1,0.1,0.2])
         # point cloud points, we don't have any so we copy polygon points
         cloud_points = polygon_points.copy()
         # label
@@ -52,7 +52,7 @@ def main(args=None, recipe:str=None):
 
         # create the box dict
         box_obj = {
-            'points': polygon_points.tolist(),
+            'polygon_points': polygon_points.tolist(),
             'cloud_points': cloud_points.tolist(),
             'label': label
         }

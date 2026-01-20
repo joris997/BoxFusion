@@ -11,6 +11,7 @@ Panels:
         - /Camera2
         - /MarkerArray1
         - /MarkerArray1/Topic1
+        - /MarkerArray2
       Splitter Ratio: 0.6479820609092712
     Tree Height: 445
   - Class: rviz_common/Selection
@@ -72,7 +73,7 @@ Visualization Manager:
       Frames:
         All Enabled: false
         allegro/ah_base_link:
-          Value: false
+          Value: true
         allegro/ah_link_00:
           Value: false
         allegro/ah_link_01:
@@ -114,7 +115,7 @@ Visualization Manager:
         allegro/ah_link_34:
           Value: false
         allegro/ah_palm_link:
-          Value: false
+          Value: true
         camera_base:
           Value: true
         camera_base_boxfusion:
@@ -127,8 +128,6 @@ Visualization Manager:
           Value: false
         imu_link:
           Value: false
-        link8_aligned:
-          Value: true
         panda/panda_link0:
           Value: true
         panda/panda_link1:
@@ -190,19 +189,18 @@ Visualization Manager:
                                     allegro/ah_link_34:
                                       {}
                         panda/panda_link8:
-                          link8_aligned:
-                            camera_base:
-                              camera_base_boxfusion:
+                          camera_base:
+                            camera_base_boxfusion:
+                              {}
+                            camera_body:
+                              {}
+                            camera_visor:
+                              {}
+                            depth_camera_link:
+                              imu_link:
                                 {}
-                              camera_body:
+                              rgb_camera_link:
                                 {}
-                              camera_visor:
-                                {}
-                              depth_camera_link:
-                                imu_link:
-                                  {}
-                                rgb_camera_link:
-                                  {}
       Update Interval: 0
       Value: true
     - Class: rviz_default_plugins/Camera
@@ -287,13 +285,25 @@ Visualization Manager:
       Enabled: true
       Name: MarkerArray
       Namespaces:
-        {}
+        online_3d_boxes: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /online_3d_boxes
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: MarkerArray
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /planner_node/command_polytopes
       Value: true
   Enabled: true
   Global Options:
@@ -341,7 +351,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.9678432941436768
+      Distance: 2.1743130683898926
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -356,10 +366,10 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.3853980302810669
+      Pitch: 0.47539761662483215
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 5.423575401306152
+      Yaw: 5.5685577392578125
     Saved: ~
 Window Geometry:
   Camera:

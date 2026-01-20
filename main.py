@@ -46,13 +46,8 @@ def text_to_feature(strings, clip_model, device="cuda"):
 
 # small ros node that publishes the online 3d detection boxes 
 class Online3DNode(Node):
-    def __init__(self, recipe:str=None):
+    def __init__(self):
         super().__init__('online_3d_node')
-
-        # extra objects, predicates from STL, to be detected!
-        self.recipe = recipe
-        self.objects = get_objects_from_predicate_file(recipe)
-        print("Extra objects to be detected:", self.objects)
 
         # create publisher as list of PolygonStamped
         self.box_visual_publisher = self.create_publisher(MarkerArray, 'online_3d_boxes', 10)
@@ -67,8 +62,14 @@ class Online3DNode(Node):
         else:
             with open('./config/online.yaml', 'r') as  f:
                 self.cfg = yaml.full_load(f)
-        self.cfg['data']['output_dir'] = os.path.join(self.cfg['data']['output_dir'],self.recipe)
+        self.cfg['data']['output_dir'] = os.path.join(self.cfg['data']['output_dir'],self.cfg['recipe'])
+        os.makedirs(self.cfg['data']['output_dir'], exist_ok=True)
+
+        # extra objects, predicates from STL, to be detected!
+        self.objects = get_objects_from_predicate_file(self.cfg['recipe'])
+        print("Extra objects to be detected:", self.objects)
         
+        # the kind of dataset (online)
         dataset = get_dataset(self.cfg)
 
         assert self.cfg['model_path'] is not None
@@ -87,6 +88,7 @@ class Online3DNode(Node):
             model = model.to(self.cfg['device'])
             clip_model, preprocess = load_clip(self.cfg['clip_path'])
             text_class = np.genfromtxt(self.cfg['class_txt'], delimiter='\n', dtype=str) 
+            text_class = np.char.lower(text_class)
             # print(f"text classes {text_class}")
             text_features = torch.load(self.cfg['class_features']).cuda()
 
@@ -123,7 +125,7 @@ class Online3DNode(Node):
                            'cloud_points': (N,6) ndarray, 
                            'label': str} 
         """
-        print("Saving boxes to:", save_path)
+        print(f"Saving {len(self.boxes)} boxes to: {save_path}")
 
         if not os.path.exists(save_path):
             os.makedirs(save_path)
@@ -136,7 +138,7 @@ class Online3DNode(Node):
 
             box_obj = {
                 'polygon_points': box['polygon_points'],
-                'cloud_points': in_box_points,
+                'cloud_points': in_box_points.cpu().numpy(),
                 'label': label
             }
 
@@ -582,9 +584,9 @@ class Online3DNode(Node):
             
 
 
-def main(args=None, recipe:str=None):
+def main(args=None):
     rclpy.init(args=args)
-    node = Online3DNode(recipe=recipe)
+    node = Online3DNode()
     
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
@@ -601,10 +603,4 @@ def main(args=None, recipe:str=None):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Online 3D Node")
-    parser.add_argument('--recipe', default='none', help='recipe/instruction, loads the response file')
-    args = parser.parse_args()
-
-    
-
-    main(args=None, recipe=args.recipe)
+    main(args=None)

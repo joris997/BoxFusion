@@ -6,10 +6,11 @@ import os
 import numpy as np
 import torch
 from c_space_stl.c_space_stl.helpers.sets import Polytope
+import matplotlib.pyplot as plt
 from tools.utils import get_objects_from_predicate_file, points_in_box
 
  
-def main(args=None, recipe:str=None):
+def main(args=None, recipe:str=None, plot:bool=False):
     assert recipe is not None, "Please provide a recipe name."
 
     results_folder = os.path.expanduser('~/c_space_stl_results')
@@ -37,10 +38,27 @@ def main(args=None, recipe:str=None):
             # load the pkl file
             with open(os.path.join(response_dir, file), "rb") as f:
                 box_obj = pickle.load(f)
+                old_box_obj = box_obj.copy()
                 
                 poly = Polytope(box_obj['polygon_points'])
                 box_obj['cloud_points'] = points_in_box(poly, xyzrgb=xyzrgb_o3d)
-                
+
+                if plot:
+                    fig = plt.figure()
+                    ax = fig.add_subplot(111, projection='3d')
+                    ax.scatter(np.array(old_box_obj['cloud_points'])[:,0],
+                               np.array(old_box_obj['cloud_points'])[:,1],
+                               np.array(old_box_obj['cloud_points'])[:,2],
+                               c='red', s=5, label='Old Box Cloud Points')
+                    ax.scatter(np.array(box_obj['cloud_points'])[:,0],
+                               np.array(box_obj['cloud_points'])[:,1],
+                               np.array(box_obj['cloud_points'])[:,2],
+                               c='green', s=5, label='New Box Cloud Points')
+                    poly.plot(ax, color='blue', alpha=1.0)
+                    ax.set_title(f'Box: {box_obj["label"]}')
+                    ax.legend()
+                    plt.savefig(os.path.join(response_dir, f'box_{box_obj["label"]}_comparison.png'))
+
                 # save back to pkl
             with open(os.path.join(response_dir, file), "wb") as f:
                 pickle.dump(box_obj, f)
@@ -55,6 +73,7 @@ def main(args=None, recipe:str=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Online 3D Node")
     parser.add_argument('--recipe', default='none', help='recipe/instruction, loads the response file')
+    parser.add_argument('--plot', default=False, action='store_true', help='whether to plot the boxes')
     args = parser.parse_args()
 
-    main(args=None, recipe=args.recipe)
+    main(args=None, recipe=args.recipe, plot=args.plot)

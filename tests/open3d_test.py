@@ -22,10 +22,7 @@ import yaml
 
 pyexample_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(pyexample_path)
-
 from boxfusion.capture_stream import ROSDataset
-from tests.open3d_example import read_trajectory
-
 
 # read ~/c_space_stl_results/eye_on_hand_calibration.json
 with open(os.path.expanduser('~/c_space_stl_results/eye_on_hand_calibration.json'), 'r') as f:
@@ -82,9 +79,13 @@ class OnlineOpen3DNode(Node):
                          parameter_overrides=[Parameter('use_sim_time',Parameter.Type.BOOL, True)])
         print("done init")
         self.cfg = cfg
+        self.cfg['data']['output_dir'] = os.path.join(self.cfg['data']['output_dir'],self.cfg['recipe'])
+
+        # Create live running rosdataset (Node)
         print("Creating ROSDataset for online Open3D integration")
         self.dataset = ROSDataset(cfg)
         self.dataset.load_arkit_depth = True
+
 
         # pointcloud ros2 publisher
         self.point_cloud_pub = self.create_publisher(
@@ -235,6 +236,9 @@ class OnlineOpen3DNode(Node):
             xyzrgb = self.volume.extract_point_cloud()
             xyzrgb.transform(self.T_restore)
             self.xyzrgb = np.hstack((np.asarray(xyzrgb.points), np.asarray(xyzrgb.colors)))
+            # save to .npy
+            np.save(os.path.join(self.cfg['data']['output_dir'], f'xyzrgb_o3d.npy'), self.xyzrgb)
+
             self.publish_point_cloud(self.xyzrgb)
 
             break

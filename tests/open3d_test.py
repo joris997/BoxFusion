@@ -11,6 +11,8 @@ import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
 import os, sys
+from rclpy import Parameter
+import time
 
 import yaml
 
@@ -26,16 +28,40 @@ with open(os.path.expanduser('~/c_space_stl_results/eye_on_hand_calibration.json
     import json 
     calib_data = json.load(f)
     camera_matrix = calib_data['camera_matrix']  # 3x3 list
-print(camera_matrix)
+print("Original camera matrix:", camera_matrix)
 camera_matrix = np.array(camera_matrix)
+
+# The camera matrix is for the original high-resolution image
+# We need to scale it to match the 640x480 resolution used by ROSDataset
+# Estimate original resolution from principal point (cx, cy should be ~half of width, height)
+original_width = camera_matrix[0, 2] * 2  # cx * 2
+original_height = camera_matrix[1, 2] * 2  # cy * 2
+target_width = 640
+target_height = 480
+
+scale_x = target_width / original_width
+scale_y = target_height / original_height
+
+print(f"Original resolution estimate: {original_width:.0f}x{original_height:.0f}")
+print(f"Target resolution: {target_width}x{target_height}")
+print(f"Scale factors: x={scale_x:.4f}, y={scale_y:.4f}")
+
+# Scale the intrinsics
+fx_scaled = camera_matrix[0, 0] * scale_x
+fy_scaled = camera_matrix[1, 1] * scale_y
+cx_scaled = camera_matrix[0, 2] * scale_x
+cy_scaled = camera_matrix[1, 2] * scale_y
+
+print(f"Scaled intrinsics: fx={fx_scaled:.2f}, fy={fy_scaled:.2f}, cx={cx_scaled:.2f}, cy={cy_scaled:.2f}")
+
 camera_intrinsics = o3d.camera.PinholeCameraIntrinsic()
 camera_intrinsics.set_intrinsics(
-    width=640,
-    height=480,
-    fx=camera_matrix[0,0],
-    fy=camera_matrix[1,1],
-    cx=camera_matrix[0,2],
-    cy=camera_matrix[1,2],
+    width=target_width,
+    height=target_height,
+    fx=fx_scaled,
+    fy=fy_scaled,
+    cx=cx_scaled,
+    cy=cy_scaled,
 )
 
 # create ros dataset 
@@ -48,50 +74,119 @@ print(cfg)
 
 class OnlineOpen3DNode(Node):
     def __init__(self):
-        super().__init__('online_open3d_node')
+        super().__init__('online_open3d_node',
+                         parameter_overrides=[Parameter('use_sim_time',Parameter.Type.BOOL, True)])
         print("done init")
         self.cfg = cfg
         print("Creating ROSDataset for online Open3D integration")
-        dataset = ROSDataset(cfg)
-        dataset.load_arkit_depth = True
+        self.dataset = ROSDataset(cfg)
+        self.dataset.load_arkit_depth = True
 
-        # volume object
-        print("Creating TSDF volume")
-        volume = o3d.pipelines.integration.UniformTSDFVolume(
-            length=4.0,
+        # Define workspace bounds (meters)
+        self.workspace_min = np.array([-0.5, 0.0, -0.1])
+        self.workspace_max = np.array([0.5, 1.2, 0.5])
+        
+        # Calculate workspace center and dimensions
+        self.workspace_center = (self.workspace_min + self.workspace_max) / 2.0
+        workspace_size = self.workspace_max - self.workspace_min
+        max_dim = np.max(workspace_size)
+        
+        print(f"Workspace center: {self.workspace_center}")
+        print(f"Workspace dimensions: {workspace_size}")
+        print(f"Max dimension: {max_dim:.3f}m")
+        
+        # Create TSDF volume centered at origin
+        # Volume will be centered at workspace_center via pose transformation
+        # Use smallest cube that fits the workspace
+        volume_length = max_dim * 1.1  # 10% margin for safety
+        voxel_size = volume_length / 512
+        print(f"Volume length: {volume_length:.3f}m")
+        print(f"Voxel size: {voxel_size*1000:.2f}mm")
+        
+        self.volume = o3d.pipelines.integration.UniformTSDFVolume(
+            length=volume_length,
             resolution=512,
-            sdf_trunc=0.04,
+            sdf_trunc=voxel_size * 5,  # 5 voxels truncation
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
-        for sample in dataset:
-            print(f"Integrate frame into the volume.")
-            pose = sample['sensor_info'].gt.RT.numpy()
-            rgb = sample['sensor_info'].wide.image.K[-1].numpy()
-            depth = sample['sensor_info'].wide.depth.K[-1].numpy()
-            print(f"pose: {pose}")
-            print(f"rgb shape: {rgb.shape}, depth shape: {depth.shape}")
-            print(f"rgb: {rgb}, depth: {depth}")
+        print("Starting online integration loop")
+        self.run()
+
+    def run(self):
+        cnt = 0
+        max_cnt = 7
+        for sample in self.dataset:
+            print(f"\n=== Frame {cnt} ===")
+            pose = sample['sensor_info'].gt.RT.numpy()[0]  # camera-to-world
+            rgb = sample['wide']['image'][-1].numpy()
+            depth = sample['wide']['depth'][-1].numpy()
 
             # reorder channels
             rgb = np.transpose(rgb, (1,2,0))
             rgb = rgb.astype(np.uint8)
             depth = depth.astype(np.float32)
+            
+            camera_pos = pose[:3, 3]
+            print(f"Camera position: {camera_pos}")
+            print(f"Depth range: [{np.min(depth):.3f}, {np.max(depth):.3f}]m")
+            
+            # Transform pose to center volume on workspace
+            # Create translation matrix to shift workspace center to origin
+            T_recenter = np.eye(4)
+            T_recenter[:3, 3] = -self.workspace_center
+            
+            # Apply to camera pose: new_pose = pose @ T_recenter^-1
+            # (shift world by -center, which shifts camera by +center in world frame)
+            T_recenter_inv = np.eye(4)
+            T_recenter_inv[:3, 3] = self.workspace_center
+            pose_recentered = T_recenter_inv @ pose
+            
+            # Open3D expects world-to-camera (extrinsic matrix)
+            pose_inv = np.linalg.inv(pose_recentered)
 
             # convert to open3d rgbd image
             color_o3d = o3d.geometry.Image(rgb)
             depth_o3d = o3d.geometry.Image(depth)
             rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
-                color_o3d, depth_o3d, depth_trunc=4.0, convert_rgb_to_intensity=False)
+                color_o3d, depth_o3d, depth_scale=1.0, depth_trunc=3.0, convert_rgb_to_intensity=False)
             
-            volume.integrate(
+            self.volume.integrate(
                 rgbd_image,
                 camera_intrinsics,
-                np.linalg.inv(pose),
+                pose_inv,
             )
 
-            voxel_pcd = volume.extract_voxel_point_cloud()
-            o3d.visualization.draw_geometries([voxel_pcd])
+            cnt += 1
+            if cnt >= max_cnt:
+                break
+
+        print("\n=== Extracting point cloud ===")
+        pcd = self.volume.extract_point_cloud()
+        print(f"Point cloud: {len(pcd.points)} points")
+        
+        # Transform point cloud back to original world coordinates
+        T_restore = np.eye(4)
+        T_restore[:3, 3] = self.workspace_center
+        pcd.transform(T_restore)
+        
+        # Verify points are in expected workspace
+        points = np.asarray(pcd.points)
+        if len(points) > 0:
+            print(f"Point cloud bounds:")
+            print(f"  X: [{points[:,0].min():.3f}, {points[:,0].max():.3f}]")
+            print(f"  Y: [{points[:,1].min():.3f}, {points[:,1].max():.3f}]")
+            print(f"  Z: [{points[:,2].min():.3f}, {points[:,2].max():.3f}]")
+        
+        o3d.visualization.draw_geometries([pcd])
+
+        # xyz = np.asarray(xyz.points)
+        # rgb = np.asarray(xyz.colors)
+        # xyzrgb = np.hstack((xyz, rgb))
+        # print("Extracted point cloud from volume")
+        # print(f"number of points: {xyzrgb.shape}")
+
+        
 
 
 def main(args=None):

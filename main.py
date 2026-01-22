@@ -89,6 +89,7 @@ class Online3DNode(Node):
             clip_model, preprocess = load_clip(self.cfg['clip_path'])
             text_class = np.genfromtxt(self.cfg['class_txt'], delimiter='\n', dtype=str) 
             text_class = np.char.lower(text_class)
+            text_class = np.char.replace(text_class, ' ', '_')
             # print(f"text classes {text_class}")
             text_features = torch.load(self.cfg['class_features']).cuda()
 
@@ -159,7 +160,7 @@ class Online3DNode(Node):
         """
         print("Publishing visual boxes...")
 
-        if boxes is not None:
+        if boxes is None:
             boxes = self.boxes
 
         marker_array = MarkerArray()

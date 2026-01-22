@@ -29,6 +29,7 @@ from boxfusion.sensor import SensorArrayInfo, SensorInfo, PosedSensorInfo
 # for ros2 version
 import rclpy
 from rclpy.node import Node
+from rclpy import Parameter
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from sensor_msgs.msg import Image
@@ -331,7 +332,8 @@ MAX_LONG_SIDE = 1024
 
 class MultiSensorFusion(Node):
     def __init__(self):
-        super().__init__('multi_sensor_fusion_node')
+        super().__init__('multi_sensor_fusion_node',
+                         parameter_overrides=[Parameter('use_sim_time',Parameter.Type.BOOL, False)])
         
         # 1. 
         self.frame_count = 0
@@ -350,7 +352,7 @@ class MultiSensorFusion(Node):
         self.last_depth_put_time = 0  
         self.last_pose_put_time = 0  # 
         self.last_pose_put_time = 0  # 
-        self.MIN_INTERVAL = 0.05  # 
+        self.MIN_INTERVAL = 0.05  # 0.25 for rosbag testing
 
         # 4. 
         self.tf_buffer = Buffer(cache_time=rclpy.time.Duration(seconds=10))
@@ -378,7 +380,7 @@ class MultiSensorFusion(Node):
         # 6. 
         self.pose_timer = self.create_timer(0.02, self.pose_update, callback_group=self.timer_group)  # 50Hz
         
-        # 7. 
+        # 7. #0.2 for rosbag testing
         self.sync_timer = self.create_timer(0.02, self.process_synced_data, callback_group=self.timer_group)  # 30Hz
         self.data_callback = None  #
 
@@ -394,7 +396,6 @@ class MultiSensorFusion(Node):
         if current_time - self.last_rgb_put_time < self.MIN_INTERVAL:
             return  
         try:
-            
             cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
             self.rgb_queue.put((timestamp, cv_image), timeout=0.001)
@@ -416,7 +417,7 @@ class MultiSensorFusion(Node):
             self.get_logger().warn(f"error: {str(e)}")
 
     def pose_update(self):
-        # print("Pose update")
+        # print("Pose callback")
         current_time = time.monotonic()
         if current_time - self.last_pose_put_time < self.MIN_INTERVAL:
             return  # skip
@@ -424,6 +425,7 @@ class MultiSensorFusion(Node):
             if self.tf_buffer.can_transform(
                 self.source_frame, 
                 self.target_frame, 
+                # self.get_clock().now()
                 rclpy.time.Time()
             ):
                 transform = self.tf_buffer.lookup_transform(
@@ -433,7 +435,6 @@ class MultiSensorFusion(Node):
                     timeout=rclpy.time.Duration(seconds=0.05)
                 )
                 
-
                 translation = transform.transform.translation
                 rotation = transform.transform.rotation
                 pose_matrix = self._quaternion_to_matrix(
@@ -445,9 +446,12 @@ class MultiSensorFusion(Node):
                 stamp = transform.header.stamp
                 timestamp = stamp.sec * 10**9 + stamp.nanosec
                 
-                # print(f"Pose timestamp: {timestamp}")
+                print(f"Pose timestamp: {timestamp}")
                 self.pose_queue.put((timestamp, pose_matrix), timeout=0.001)
                 self.last_pose_put_time = current_time
+            # print("Pose callback done")
+            else:
+                print("Cannot transform yet")
         except (TransformException, queue.Full) as e:
             pass
     
@@ -507,6 +511,7 @@ class MultiSensorFusion(Node):
 
             self.frame_count = 0
             self.last_log_time = current_time
+            print(f"rgb_data shape: {rgb_data.shape}, depth_data shape: {depth_data.shape}, closest_pose shape: {closest_pose.shape}, FPS: {fps:.2f}")
             self.process_fusion_data(rgb_data, depth_data, closest_pose)
             
             
@@ -601,7 +606,6 @@ class ROSDataset(IterableDataset):
         return 100000000
 
     def __iter__(self):
-        print("Waiting for frames...")
         video_id = self.video_id
         index = 0
         #start ROS Loop

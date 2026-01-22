@@ -7,7 +7,7 @@ viz_on_gt_points: True
 device: cuda
 total_duration: 10
 
-recipe: test2
+recipe: two_drop
 
 data:
   datadir: /home/none/c_space_stl_results/

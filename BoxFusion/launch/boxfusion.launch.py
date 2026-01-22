@@ -96,7 +96,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         rviz_node,
-        tf_broadcaster_node_1,
-        tf_broadcaster_node_3,
-        kinect_launch,
+        # tf_broadcaster_node_1,
+        # tf_broadcaster_node_3,
+        # kinect_launch,
     ])

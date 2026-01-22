@@ -44,14 +44,28 @@ rgb_cam: # scaled from 2048x1536
 depth_cam: # scaled from 1024x1024
   H: 480
   W: 640
-  # fx: 315.85
-  # fy: 236.74
-  # cx: 320.25
-  # cy: 240.53
   fx: 303.2797
   fy: 303.1887
   cx: 315.6464
   cy: 242.3771
+  png_depth_scale: 1000.0
+
+# Azure Kinect proper calibration
+# rgb_cam:
+rgb_cam: # scaled from 2048x1536
+  H: 480
+  W: 640
+  fx: 307.39
+  fy: 300.12
+  cx: 320.00
+  cy: 240.00
+depth_cam: # scaled from 1024x1024
+  H: 480
+  W: 640
+  fx: 307.39
+  fy: 300.12
+  cx: 320.00
+  cy: 240.00
   png_depth_scale: 1000.0
 
 detection:
@@ -89,7 +103,7 @@ box_fusion:
 
 
 vis:
-  rerun: True
+  rerun: False
   show_class: True 
   show_label: True 
   trajectory: True

@@ -352,7 +352,7 @@ class MultiSensorFusion(Node):
         self.last_depth_put_time = 0  
         self.last_pose_put_time = 0  # 
         self.last_pose_put_time = 0  # 
-        self.MIN_INTERVAL = 0.05  # 0.25 for rosbag testing
+        self.MIN_INTERVAL = 0.1  # 0.25 for rosbag testing
 
         # 4. 
         self.tf_buffer = Buffer(cache_time=rclpy.time.Duration(seconds=10))
@@ -378,10 +378,10 @@ class MultiSensorFusion(Node):
             PointCloud2, '/camera/pointcloud', 10)
 
         # 6. 
-        self.pose_timer = self.create_timer(0.02, self.pose_update, callback_group=self.timer_group)  # 50Hz
+        self.pose_timer = self.create_timer(0.1, self.pose_update, callback_group=self.timer_group)  # 50Hz
         
         # 7. #0.2 for rosbag testing
-        self.sync_timer = self.create_timer(0.02, self.process_synced_data, callback_group=self.timer_group)  # 30Hz
+        self.sync_timer = self.create_timer(0.1, self.process_synced_data, callback_group=self.timer_group)  # 30Hz
         self.data_callback = None  #
 
         self.get_logger().info("🚀 start")
@@ -391,27 +391,27 @@ class MultiSensorFusion(Node):
         self.data_callback = callback
 
     def rgb_callback(self, msg):
-        # print("RGB callback")
+        print("RGB callback")
         current_time = time.monotonic()
         if current_time - self.last_rgb_put_time < self.MIN_INTERVAL:
             return  
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
-            self.rgb_queue.put((timestamp, cv_image), timeout=0.001)
+            self.rgb_queue.put((timestamp, cv_image), timeout=0.1)  # 100ms - allow time to queue at 15fps
             self.last_rgb_put_time = current_time  # 
         except Exception as e:
             self.get_logger().warn(f"RGB error: {str(e)}")
 
     def depth_callback(self, msg):
-        # print("Depth callback")
+        print("Depth callback")
         current_time = time.monotonic()
         if current_time - self.last_depth_put_time < self.MIN_INTERVAL:
             return  # 
         try:
             depth_image = self.bridge.imgmsg_to_cv2(msg, 'passthrough')
             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
-            self.depth_queue.put((timestamp, depth_image), timeout=0.001)
+            self.depth_queue.put((timestamp, depth_image), timeout=0.1)  # 100ms - allow time to queue at 15fps
             self.last_depth_put_time = current_time
         except Exception as e:
             self.get_logger().warn(f"error: {str(e)}")
@@ -446,12 +446,13 @@ class MultiSensorFusion(Node):
                 stamp = transform.header.stamp
                 timestamp = stamp.sec * 10**9 + stamp.nanosec
                 
-                print(f"Pose timestamp: {timestamp}")
-                self.pose_queue.put((timestamp, pose_matrix), timeout=0.001)
+                # print(f"Pose timestamp: {timestamp}")
+                self.pose_queue.put((timestamp, pose_matrix), timeout=0.05)  # 50ms - faster than RGB/Depth
                 self.last_pose_put_time = current_time
             # print("Pose callback done")
             else:
-                print("Cannot transform yet")
+                a=1
+                # print("Cannot transform yet")
         except (TransformException, queue.Full) as e:
             pass
     
@@ -471,22 +472,27 @@ class MultiSensorFusion(Node):
         """30Hz"""
         # print(f"rgb_queue size: {self.rgb_queue.qsize()}, depth_queue size: {self.depth_queue.qsize()}, pose_queue size: {self.pose_queue.qsize()}")
         try:
-            # 1. 
-            rgb_stamp, rgb_data = self.rgb_queue.get(timeout=0.01)
-            depth_stamp, depth_data = self.depth_queue.get(timeout=0.01)
+            # 1. Get RGB and depth with longer timeout to wait for 15fps data
+            rgb_stamp, rgb_data = self.rgb_queue.get(timeout=0.15)  # 150ms - more than 2 frames at 15fps
+            depth_stamp, depth_data = self.depth_queue.get(timeout=0.15)  # 150ms
             
             # 2. 
             rgb_data = cv2.resize(rgb_data, (640, 480))
             depth_data = cv2.resize(depth_data, (640, 480), interpolation=cv2.INTER_NEAREST)
             
-            # 3. 
+            # 3. Find closest pose
             closest_pose = None
             min_time_diff = float('inf')
-            MAX_TIME_DIFF = 50 * 1e6  # 50ms
+            MAX_TIME_DIFF = 20 * 1e6  # 100ms (very permissive)
+            pose_stamp_match = None
             
+            # Collect all available poses
             pose_items = []
             while not self.pose_queue.empty():
-                pose_stamp, pose_matrix = self.pose_queue.get()
+                try:
+                    pose_stamp, pose_matrix = self.pose_queue.get(timeout=0.01)
+                except queue.Empty:
+                    break
                 pose_items.append((pose_stamp, pose_matrix))
                 
                 time_diff = abs(pose_stamp - rgb_stamp)
@@ -494,12 +500,17 @@ class MultiSensorFusion(Node):
                     min_time_diff = time_diff
                     closest_pose = pose_matrix
                     pose_stamp_match = pose_stamp
-                    # 4. 
-                    for item in pose_items:
-                        if item[0] != pose_stamp_match:  
-                            self.pose_queue.put(item)
+            
+            # Put back unmatched poses AFTER the loop
+            for item in pose_items:
+                if pose_stamp_match is None or item[0] != pose_stamp_match:
+                    try:
+                        self.pose_queue.put(item, timeout=0.05)
+                    except queue.Full:
+                        pass  # Drop if queue is full
             
             if closest_pose is None:
+                print(f"No pose match found! RGB stamp: {rgb_stamp}, collected {len(pose_items)} poses")
                 return
                 
 
@@ -533,7 +544,7 @@ class MultiSensorFusion(Node):
                 'rgb': rgb,
                 'depth': depth,
                 'pose': pose
-            }, timeout=0.001)
+            }, timeout=0.1)  # 100ms - ensure processed data gets queued
         except queue.Full:
             self.get_logger().warn("full skip data")
 

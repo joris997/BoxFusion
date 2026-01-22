@@ -89,14 +89,15 @@ def generate_launch_description():
                 'driver.launch.py'
             )
         ),
-        launch_arguments={'rgb_point_cloud': 'true',
+        launch_arguments={'fps': '15', 
+                          'rgb_point_cloud': 'true',
                           'point_cloud_in_depth_frame': 'true',
                           }.items()
     )
 
     return LaunchDescription([
         rviz_node,
-        # tf_broadcaster_node_1,
-        # tf_broadcaster_node_3,
-        # kinect_launch,
+        tf_broadcaster_node_1,
+        tf_broadcaster_node_3,
+        kinect_launch,
     ])

@@ -26,7 +26,7 @@ setup(
     license='TODO: License declaration',
     entry_points={
         'console_scripts': [
-            'ros_demo = BoxFusion.ros_demo:main',
+            'run_main = BoxFusion.main:main',
         ],
     },
 )

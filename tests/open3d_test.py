@@ -10,9 +10,13 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
+from sensor_msgs.msg import PointCloud2, PointField
+from std_msgs.msg import Header, Bool
+from sensor_msgs_py import point_cloud2
 import os, sys
 from rclpy import Parameter
 import time
+import threading
 
 import yaml
 
@@ -82,14 +86,39 @@ class OnlineOpen3DNode(Node):
         self.dataset = ROSDataset(cfg)
         self.dataset.load_arkit_depth = True
 
+        # pointcloud ros2 publisher
+        self.point_cloud_pub = self.create_publisher(
+            PointCloud2,
+            '/open3d/merged_point_cloud',
+            10
+        )
+
+        # next subscriber
+        self.next_sub = self.create_subscription(
+            Bool,
+            '/open3d/next_frame',
+            self.next_frame_callback,
+            10
+        )
+        self.cnt = 0
+        self.next_cnt = 0
+        self.start_time = time.time()
+        self.max_time = 10000  # seconds
+
         # Define workspace bounds (meters)
         self.workspace_min = np.array([-0.5, 0.0, -0.1])
         self.workspace_max = np.array([0.5, 1.2, 0.5])
-        
+
         # Calculate workspace center and dimensions
         self.workspace_center = (self.workspace_min + self.workspace_max) / 2.0
         workspace_size = self.workspace_max - self.workspace_min
         max_dim = np.max(workspace_size)
+
+        self.T_restore = np.eye(4)
+        self.T_restore[0:3, 0:3] = np.array([[0, 1, 0],      # swap x and y axis
+                                             [1, 0, 0],
+                                             [0, 0, 1]])
+        self.T_restore[:3, 3] = self.workspace_center        # translate back to original center            
         
         print(f"Workspace center: {self.workspace_center}")
         print(f"Workspace dimensions: {workspace_size}")
@@ -111,13 +140,64 @@ class OnlineOpen3DNode(Node):
         )
 
         print("Starting online integration loop")
-        self.run()
+        # while True:
+        #     self.run_once()
+        #     elapsed_time = time.time() - self.start_time
+        #     if elapsed_time > self.max_time:
+        #         print(f"Reached max time of {self.max_time}s, stopping integration")
+        #         break
+        # print("\n=== Extracting point cloud ===")
+        # pcd = self.volume.extract_point_cloud()
+        # print(f"Point cloud: {len(pcd.points)} points")
+        # pcd.transform(self.T_restore)
 
-    def run(self):
-        cnt = 0
-        max_cnt = 7
+    def publish_point_cloud(self, point_cloud:np.ndarray):
+        # Convert to float32 and extract xyz and rgb
+        xyz = point_cloud[:, :3].astype(np.float32)
+        rgb = point_cloud[:, 3:6].astype(np.float32)
+        
+        # Pack RGB into a single uint32 (as required by PointCloud2 RGB convention)
+        # RGB values should be in [0, 1] range from point_cloud
+        rgb_uint8 = np.clip((rgb * 255), 0, 255).astype(np.uint8)
+        rgb_packed = (rgb_uint8[:, 0].astype(np.uint32) << 16 | 
+                      rgb_uint8[:, 1].astype(np.uint32) << 8 | 
+                      rgb_uint8[:, 2].astype(np.uint32))
+        
+        # Create structured array with the correct dtypes
+        cloud_arr = np.zeros(len(xyz), dtype=[
+            ('x', np.float32),
+            ('y', np.float32),
+            ('z', np.float32),
+            ('rgb', np.uint32),
+        ])
+        
+        cloud_arr['x'] = xyz[:, 0]
+        cloud_arr['y'] = xyz[:, 1]
+        cloud_arr['z'] = xyz[:, 2]
+        cloud_arr['rgb'] = rgb_packed
+        
+        fields = [
+            PointField(name='x',   offset=0,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='y',   offset=4,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='z',   offset=8,  datatype=PointField.FLOAT32, count=1),
+            PointField(name='rgb', offset=12, datatype=PointField.UINT32,  count=1),
+        ]
+
+        header = Header()
+        header.frame_id = "panda/panda_link0"
+        header.stamp = self.get_clock().now().to_msg()
+        pc2 = point_cloud2.create_cloud(header, fields, cloud_arr)
+        self.point_cloud_pub.publish(pc2)
+
+    def next_frame_callback(self, msg:Bool):
+        print("Received next frame signal")
+        if msg.data:
+            self.cnt += 1
+            self.run_once()
+
+    def run_once(self):
         for sample in self.dataset:
-            print(f"\n=== Frame {cnt} ===")
+            print(f"\n=== Frame {self.cnt} ===")
             pose = sample['sensor_info'].gt.RT.numpy()[0]  # camera-to-world
             rgb = sample['wide']['image'][-1].numpy()
             depth = sample['wide']['depth'][-1].numpy()
@@ -130,11 +210,6 @@ class OnlineOpen3DNode(Node):
             camera_pos = pose[:3, 3]
             print(f"Camera position: {camera_pos}")
             print(f"Depth range: [{np.min(depth):.3f}, {np.max(depth):.3f}]m")
-            
-            # Transform pose to center volume on workspace
-            # Create translation matrix to shift workspace center to origin
-            T_recenter = np.eye(4)
-            T_recenter[:3, 3] = -self.workspace_center
             
             # Apply to camera pose: new_pose = pose @ T_recenter^-1
             # (shift world by -center, which shifts camera by +center in world frame)
@@ -157,37 +232,13 @@ class OnlineOpen3DNode(Node):
                 pose_inv,
             )
 
-            cnt += 1
-            if cnt >= max_cnt:
-                break
+            xyzrgb = self.volume.extract_point_cloud()
+            xyzrgb.transform(self.T_restore)
+            xyzrgb = np.hstack((np.asarray(xyzrgb.points), np.asarray(xyzrgb.colors)))
+            self.publish_point_cloud(xyzrgb)
 
-        print("\n=== Extracting point cloud ===")
-        pcd = self.volume.extract_point_cloud()
-        print(f"Point cloud: {len(pcd.points)} points")
+            break
         
-        # Transform point cloud back to original world coordinates
-        T_restore = np.eye(4)
-        T_restore[:3, 3] = self.workspace_center
-        pcd.transform(T_restore)
-        
-        # Verify points are in expected workspace
-        points = np.asarray(pcd.points)
-        if len(points) > 0:
-            print(f"Point cloud bounds:")
-            print(f"  X: [{points[:,0].min():.3f}, {points[:,0].max():.3f}]")
-            print(f"  Y: [{points[:,1].min():.3f}, {points[:,1].max():.3f}]")
-            print(f"  Z: [{points[:,2].min():.3f}, {points[:,2].max():.3f}]")
-        
-        o3d.visualization.draw_geometries([pcd])
-
-        # xyz = np.asarray(xyz.points)
-        # rgb = np.asarray(xyz.colors)
-        # xyzrgb = np.hstack((xyz, rgb))
-        # print("Extracted point cloud from volume")
-        # print(f"number of points: {xyzrgb.shape}")
-
-        
-
 
 def main(args=None):
     rclpy.init(args=args)
@@ -205,49 +256,7 @@ def main(args=None):
         node.destroy_node()
         rclpy.shutdown()
 
+
 if __name__ == "__main__":
     print("Starting online Open3D node")
     main(args=None)
-
-# if __name__ == "__main__":
-#     rgbd_data = o3d.data.SampleRedwoodRGBDImages()
-#     camera_poses = read_trajectory(rgbd_data.odometry_log_path)
-#     camera_intrinsics = o3d.camera.PinholeCameraIntrinsic(
-#         o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault)
-#     volume = o3d.pipelines.integration.UniformTSDFVolume(
-#         length=4.0,
-#         resolution=512,
-#         sdf_trunc=0.04,
-#         color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
-#     )
-
-#     for i in range(len(camera_poses)):
-#         print("Integrate {:d}-th image into the volume.".format(i))
-#         color = o3d.io.read_image(rgbd_data.color_paths[i])
-#         depth = o3d.io.read_image(rgbd_data.depth_paths[i])
-#         print(f"color: {color}, depth: {depth}")
-
-#         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-#             color, depth, depth_trunc=4.0, convert_rgb_to_intensity=False)
-#         volume.integrate(
-#             rgbd,
-#             camera_intrinsics,
-#             "boop",#np.linalg.inv(camera_poses[i].pose),
-#         )
-
-#     # print("Extract triangle mesh")
-#     # mesh = volume.extract_triangle_mesh()
-#     # mesh.compute_vertex_normals()
-#     # o3d.visualization.draw_geometries([mesh])
-
-#     print("Extract voxel-aligned debugging point cloud")
-#     voxel_pcd = volume.extract_voxel_point_cloud()
-#     o3d.visualization.draw_geometries([voxel_pcd])
-
-#     print("Extract voxel-aligned debugging voxel grid")
-#     voxel_grid = volume.extract_voxel_grid()
-#     # o3d.visualization.draw_geometries([voxel_grid])
-
-#     # print("Extract point cloud")
-#     # pcd = volume.extract_point_cloud()
-#     # o3d.visualization.draw_geometries([pcd])

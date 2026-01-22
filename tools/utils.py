@@ -437,16 +437,40 @@ def scale_boxes(boxes, H, W, scale=1.2):
 
 @torch.no_grad()
 def retriev(
-    model, preprocess, elements, text_features, device
+    model, preprocess, elements, 
+    text_features, priority_features,
+    device
 ) -> int:
+    # preprocessed_images = [preprocess(image).to(device) for image in elements]
+    # stacked_images = torch.stack(preprocessed_images)
+    # image_features = model.encode_image(stacked_images)
+    # image_features /= image_features.norm(dim=-1, keepdim=True)
+    # text_features /= text_features.norm(dim=-1, keepdim=True) # added
+
+    # probs = 100.0 * image_features @ text_features.T
+
+    # return probs, image_features
+
+    # Weighted similarity score with priority features
+    priority_weight = 0.5  # Weight for priority features contribution
+    
     preprocessed_images = [preprocess(image).to(device) for image in elements]
     stacked_images = torch.stack(preprocessed_images)
     image_features = model.encode_image(stacked_images)
     image_features /= image_features.norm(dim=-1, keepdim=True)
-    text_features /= text_features.norm(dim=-1, keepdim=True) # added
+    text_features /= text_features.norm(dim=-1, keepdim=True)
 
     probs = 100.0 * image_features @ text_features.T
-
+    
+    # Add additional signal from priority features
+    if priority_features is not None and priority_features.numel() > 0:
+        priority_features = priority_features / priority_features.norm(dim=-1, keepdim=True)
+        priority_probs = 100.0 * image_features @ priority_features.T
+        
+        # Find best match in priority features and boost main scores
+        best_priority_scores, best_priority_idx = priority_probs.max(dim=-1, keepdim=True)
+        probs += priority_weight * best_priority_scores
+    
     return probs, image_features
 
 def segment_image(image, bbox):
@@ -522,14 +546,18 @@ def crop_image(boxes, rgb):
 
     return cropped_boxes, cropped_images
 
-def text_prompt(boxes, class_prompt, text_features, img_path, clip_model, preprocess):
+def text_prompt(boxes, class_prompt, 
+                text_features, priority_features, 
+                img_path, clip_model, preprocess):
     cropped_boxes, cropped_images= crop_image(
         boxes, img_path
     )
 
 
     scores, img_features = retriev(
-        clip_model, preprocess, cropped_images, text_features, device="cuda:0"
+        clip_model, preprocess, cropped_images, 
+        text_features, priority_features, 
+        device="cuda:0"
     )
 
     max_values, max_id = torch.max(scores, dim=-1) #

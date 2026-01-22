@@ -98,12 +98,13 @@ class Online3DNode(Node):
             text_class = np.concatenate((text_class, np.array(self.objects)), axis=0)
             # append extra_strings features to text_features
             extra_features = text_to_feature(self.objects, clip_model, device=self.cfg['device'])
-            text_features = torch.cat((text_features, extra_features), dim=0)
+            self.priority_features = extra_features
+            self.text_features = torch.cat((text_features, extra_features), dim=0)
             # print(f"my embedding = their embedding?: {text_features[0,:] == text_to_feature([text_class[0]], clip_model, device=args.device)[0,:]}")
             # print("Loaded text features:", text_features.shape)
         
         self.run(model, dataset, clip_model, 
-                 preprocess, text_class, text_features, augmentor, preprocessor, 
+                 preprocess, text_class, augmentor, preprocessor, 
                  gap=25, re_vis=self.cfg['vis']['rerun']
         )
         self.save_boxes(save_path=self.cfg['data']['output_dir'])
@@ -206,7 +207,7 @@ class Online3DNode(Node):
 
     def run(self, 
             model, dataset, clip_model, 
-            preprocess, tokenized_text, text_features, augmentor, preprocessor, 
+            preprocess, tokenized_text, augmentor, preprocessor, 
             gap=25, re_vis=True):
         
         is_depth_model = "wide/depth" in augmentor.measurement_keys
@@ -399,7 +400,9 @@ class Online3DNode(Node):
                     #scale the boxes by
                     boxes = scale_boxes(boxes,image.shape[0],image.shape[1],scale=self.cfg['detection']['scale_box'])
 
-                    class_results, box_features = text_prompt(boxes, tokenized_text, text_features, image, clip_model, preprocess) #[N_box]
+                    class_results, box_features = text_prompt(boxes, tokenized_text, 
+                                                              self.text_features, self.priority_features,
+                                                              image, clip_model, preprocess) #[N_box]
                     pred_instances.categories = class_results
                     print("frame",count," initial class_results:",class_results)
 
@@ -481,7 +484,9 @@ class Online3DNode(Node):
                             # scale the boxes
                             boxes = scale_boxes(boxes,image.shape[0],image.shape[1],scale=self.cfg['detection']['scale_box'])
                             # if len(pred_instances)>0:
-                            class_results, box_features = text_prompt(boxes, tokenized_text, text_features, image, clip_model, preprocess) #[N_box]
+                            class_results, box_features = text_prompt(boxes, tokenized_text, 
+                                                                      self.text_features, self.priority_features,
+                                                                      image, clip_model, preprocess) #[N_box]
                             all_pred_box.categories[cur_keep_idx_in_all] = class_results
                             print("frame",count," new box class_results:",class_results)
 
@@ -533,7 +538,8 @@ class Online3DNode(Node):
             # save the pointcloud, xyzrgb, (numpy object) to pkl
             print("Saving the pointcloud xyzrgb...")
             self.xyzrgb = xyzrgb
-            torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], 'xyzrgb.pt'))
+            # torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], 'xyzrgb.pt'))
+            np.save(os.path.join(self.cfg['data']['output_dir'], 'xyzrgb.npy'), xyzrgb.cpu().numpy())
         
         self.boxes = [{'polygon_points': boxes_3d[n], 'label': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
         self.publish_visual_boxes()

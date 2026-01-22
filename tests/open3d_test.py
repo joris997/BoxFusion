@@ -101,7 +101,7 @@ class OnlineOpen3DNode(Node):
             10
         )
         self.cnt = 0
-        self.next_cnt = 0
+        self.max_cnt = 4
         self.start_time = time.time()
         self.max_time = 10000  # seconds
 
@@ -191,7 +191,7 @@ class OnlineOpen3DNode(Node):
 
     def next_frame_callback(self, msg:Bool):
         print("Received next frame signal")
-        if msg.data:
+        if msg.data and self.cnt < self.max_cnt:
             self.cnt += 1
             self.run_once()
 
@@ -234,8 +234,8 @@ class OnlineOpen3DNode(Node):
 
             xyzrgb = self.volume.extract_point_cloud()
             xyzrgb.transform(self.T_restore)
-            xyzrgb = np.hstack((np.asarray(xyzrgb.points), np.asarray(xyzrgb.colors)))
-            self.publish_point_cloud(xyzrgb)
+            self.xyzrgb = np.hstack((np.asarray(xyzrgb.points), np.asarray(xyzrgb.colors)))
+            self.publish_point_cloud(self.xyzrgb)
 
             break
         

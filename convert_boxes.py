@@ -2,10 +2,13 @@
 import argparse
 import pickle
 from typing import List
-import os
+import os, sys
 import numpy as np
-import torch
-from c_space_stl.c_space_stl.helpers.sets import Polytope
+
+# add ... to path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from c_space_stl.helpers.sets import Polytope
+from pytope import Polytope as PytopePolytope
 import matplotlib.pyplot as plt
 from tools.utils import get_objects_from_predicate_file, points_in_box
 
@@ -40,7 +43,8 @@ def main(args=None, recipe:str=None, plot:bool=False):
                 box_obj = pickle.load(f)
                 old_box_obj = box_obj.copy()
                 
-                poly = Polytope(box_obj['polygon_points'])
+                print(box_obj['polygon_points'])
+                poly = PytopePolytope(box_obj['polygon_points'])
                 box_obj['cloud_points'] = points_in_box(poly, xyzrgb=xyzrgb_o3d)
 
                 if plot:

@@ -36,7 +36,7 @@ from geometry_msgs.msg import Point
 from std_msgs.msg import Bool
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
-import sensor_msgs_py as point_cloud2
+from sensor_msgs_py import point_cloud2
 
 from tools.utils import numpy_to_pc2
 from tools.utils import get_objects_from_predicate_file
@@ -173,8 +173,8 @@ class OnlineBoxAndPoint(Node):
         # go-to next pose subscriber
         self.next_sub = self.create_subscription(
             Bool,
-            '/open3d/next_pose',
-            self.next_pose_callback,
+            '/open3d/next_frame',
+            self.next_frame_callback,
             10
         )
         # next pose completed publisher
@@ -196,10 +196,10 @@ class OnlineBoxAndPoint(Node):
         max_dim = np.max(workspace_size)
 
         self.T_restore = np.eye(4)
-        self.T_restore[0:3, 0:3] = np.array([[0, 1, 0],      # swap x and y axis
-                                             [1, 0, 0],
+        self.T_restore[0:3, 0:3] = np.array([[1, 0, 0],      # swap x and y axis
+                                             [0, 1, 0],
                                              [0, 0, 1]])
-        self.T_restore[:3, 3] = self.workspace_center        # translate back to original center            
+        self.T_restore[:3, 3] = -self.workspace_center        # translate back to original center            
         
         # Create TSDF volume centered at origin
         # Volume will be centered at workspace_center via pose transformation
@@ -358,7 +358,7 @@ class OnlineBoxAndPoint(Node):
 
     def run_add_pointcloud(self):
         for sample in self.dataset:
-            print(f"\n=== Frame {self.cnt} ===")
+            print(f"\n=== Frame {self.cnt_pc} ===")
             pose = sample['sensor_info'].gt.RT.numpy()[0]  # camera-to-world
             rgb = sample['wide']['image'][-1].numpy()
             depth = sample['wide']['depth'][-1].numpy()
@@ -374,8 +374,9 @@ class OnlineBoxAndPoint(Node):
             
             # Apply to camera pose: new_pose = pose @ T_recenter^-1
             # (shift world by -center, which shifts camera by +center in world frame)
-            T_recenter_inv = np.eye(4)
-            T_recenter_inv[:3, 3] = self.workspace_center
+            # T_recenter_inv = np.eye(4)
+            # T_recenter_inv[:3, 3] = self.workspace_center
+            T_recenter_inv = np.linalg.inv(self.T_restore)
             pose_recentered = T_recenter_inv @ pose
             
             # Open3D expects world-to-camera (extrinsic matrix)
@@ -407,6 +408,7 @@ class OnlineBoxAndPoint(Node):
     def record_boxes_callback(self, msg:Bool):
         print("Received record boxes signal")
         if msg.data:
+            print("Recording boxes...")
             self.run_get_boxes(duration=10.0,
                                gap=25, 
                                re_vis=self.cfg['vis']['rerun'])
@@ -462,8 +464,11 @@ class OnlineBoxAndPoint(Node):
         per_frame_ins = None #save every predicted boxes
         traj_xyz = []
 
+        print("Starting box fusion...")
         box_manager = BoxManager(self.cfg)
+        print("BoxManager initialized.")
         Box_Fuser = BoxFusion(self.cfg)
+        print("BoxFusion initialized.")
 
         box_count = 0
         start_time = time.time()
@@ -707,16 +712,10 @@ class OnlineBoxAndPoint(Node):
 
             count+=1
             elapsed_time = time.time() - start_time
-            if elapsed_time >= self.cfg['total_duration']:
-                print(f"Reached total duration of {self.cfg['total_duration']} seconds. Stopping capture.")
+            if elapsed_time >= duration:
+                print(f"Reached total duration of {duration} seconds. Stopping capture.")
                 break
-            
-        # save the results
-        end_time = time.time()
-        duration = end_time - start_time  
-        fps = count / duration
-        print(f"Cost: {duration:.2f} s", f"Average FPS: {fps:.2f}")
-        
+
         # save global boxes for evaluation
         boxes_3d = all_pred_box.pred_boxes_3d.corners.cpu().numpy() # [N,8,3]
         print(f"centers after the loop: {all_pred_box.pred_boxes_3d.center}")

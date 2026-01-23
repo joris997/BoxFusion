@@ -391,30 +391,46 @@ class MultiSensorFusion(Node):
         self.data_callback = callback
 
     def rgb_callback(self, msg):
-        print("RGB callback")
+        # print("RGB callback")
         current_time = time.monotonic()
         if current_time - self.last_rgb_put_time < self.MIN_INTERVAL:
             return  
         try:
             cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
-            self.rgb_queue.put((timestamp, cv_image), timeout=0.1)  # 100ms - allow time to queue at 15fps
-            self.last_rgb_put_time = current_time  # 
+            try:
+                self.rgb_queue.put((timestamp, cv_image), block=False)
+            except queue.Full:
+                # Queue is full, discard oldest item and add new one
+                try:
+                    self.rgb_queue.get(block=False)
+                except queue.Empty:
+                    pass
+                self.rgb_queue.put((timestamp, cv_image), block=False)
+            self.last_rgb_put_time = current_time
         except Exception as e:
             self.get_logger().warn(f"RGB error: {str(e)}")
 
     def depth_callback(self, msg):
-        print("Depth callback")
+        # print("Depth callback")
         current_time = time.monotonic()
         if current_time - self.last_depth_put_time < self.MIN_INTERVAL:
             return  # 
         try:
             depth_image = self.bridge.imgmsg_to_cv2(msg, 'passthrough')
             timestamp = msg.header.stamp.sec * 10**9 + msg.header.stamp.nanosec
-            self.depth_queue.put((timestamp, depth_image), timeout=0.1)  # 100ms - allow time to queue at 15fps
+            try:
+                self.depth_queue.put((timestamp, depth_image), block=False)
+            except queue.Full:
+                # Queue is full, discard oldest item and add new one
+                try:
+                    self.depth_queue.get(block=False)
+                except queue.Empty:
+                    pass
+                self.depth_queue.put((timestamp, depth_image), block=False)
             self.last_depth_put_time = current_time
         except Exception as e:
-            self.get_logger().warn(f"error: {str(e)}")
+            self.get_logger().warn(f"Depth error: {str(e)}")
 
     def pose_update(self):
         # print("Pose callback")
@@ -447,13 +463,21 @@ class MultiSensorFusion(Node):
                 timestamp = stamp.sec * 10**9 + stamp.nanosec
                 
                 # print(f"Pose timestamp: {timestamp}")
-                self.pose_queue.put((timestamp, pose_matrix), timeout=0.05)  # 50ms - faster than RGB/Depth
+                try:
+                    self.pose_queue.put((timestamp, pose_matrix), block=False)
+                except queue.Full:
+                    # Queue is full, discard oldest item and add new one
+                    try:
+                        self.pose_queue.get(block=False)
+                    except queue.Empty:
+                        pass
+                    self.pose_queue.put((timestamp, pose_matrix), block=False)
                 self.last_pose_put_time = current_time
             # print("Pose callback done")
             else:
                 a=1
                 # print("Cannot transform yet")
-        except (TransformException, queue.Full) as e:
+        except TransformException as e:
             pass
     
     def _quaternion_to_matrix(self, x, y, z, qx, qy, qz, qw):
@@ -510,7 +534,7 @@ class MultiSensorFusion(Node):
                         pass  # Drop if queue is full
             
             if closest_pose is None:
-                print(f"No pose match found! RGB stamp: {rgb_stamp}, collected {len(pose_items)} poses")
+                # print(f"No pose match found! Collected {len(pose_items)} poses")
                 return
                 
 
@@ -522,7 +546,7 @@ class MultiSensorFusion(Node):
 
             self.frame_count = 0
             self.last_log_time = current_time
-            print(f"rgb_data shape: {rgb_data.shape}, depth_data shape: {depth_data.shape}, closest_pose shape: {closest_pose.shape}, FPS: {fps:.2f}")
+            # print(f"rgb_data shape: {rgb_data.shape}, depth_data shape: {depth_data.shape}, closest_pose shape: {closest_pose.shape}, FPS: {fps:.2f}")
             self.process_fusion_data(rgb_data, depth_data, closest_pose)
             
             
@@ -538,15 +562,24 @@ class MultiSensorFusion(Node):
         """
         position = pose[:3, 3]
         rotation = pose[:3, :3]
+        print("Putting synced data into result queue")
         try:
-            print("Putting synced data into result queue")
             self.result_queue.put({
                 'rgb': rgb,
                 'depth': depth,
                 'pose': pose
-            }, timeout=0.1)  # 100ms - ensure processed data gets queued
+            }, block=False)
         except queue.Full:
-            self.get_logger().warn("full skip data")
+            # Queue is full, discard oldest item and add new one
+            try:
+                self.result_queue.get(block=False)
+            except queue.Empty:
+                pass
+            self.result_queue.put({
+                'rgb': rgb,
+                'depth': depth,
+                'pose': pose
+            }, block=False)
 
     def get_synced_data(self, timeout=1.0):
         return self.result_queue.get(timeout=timeout)

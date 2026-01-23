@@ -34,6 +34,7 @@ def mask_points_in_box(box_poly: Polytope,
     # create a mask of all points which are inside the box
     Ab = box_poly.get_H_rep()
     A, b = Ab[0], Ab[1]
+    print(f"A shape: {A.shape}, b shape: {b.shape}, points shape: {points.shape}")
     in_box_mask = np.all(np.dot(points, A.T) <= np.repeat(b, points.shape[0], axis=1).T + 1e-6, axis=1)
     return in_box_mask
 

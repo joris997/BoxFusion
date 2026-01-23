@@ -115,8 +115,8 @@ class OnlineOpen3DNode(Node):
         self.max_time = 10000  # seconds
 
         # Define workspace bounds (meters)
-        self.workspace_min = np.array([-0.5, 0.0, -0.1])
-        self.workspace_max = np.array([0.5, 1.2, 0.5])
+        self.workspace_min = np.array([-0.3, 0.0, -0.1])
+        self.workspace_max = np.array([0.3, 1.2, 0.5])
 
         # Calculate workspace center and dimensions
         self.workspace_center = (self.workspace_min + self.workspace_max) / 2.0
@@ -124,10 +124,10 @@ class OnlineOpen3DNode(Node):
         max_dim = np.max(workspace_size)
 
         self.T_restore = np.eye(4)
-        self.T_restore[0:3, 0:3] = np.array([[0, 1, 0],      # swap x and y axis
-                                             [1, 0, 0],
+        self.T_restore[0:3, 0:3] = np.array([[1, 0, 0],      # swap x and y axis
+                                             [0, 1, 0],
                                              [0, 0, 1]])
-        self.T_restore[:3, 3] = self.workspace_center        # translate back to original center            
+        self.T_restore[:3, 3] = -self.workspace_center        # translate back to original center            
         
         print(f"Workspace center: {self.workspace_center}")
         print(f"Workspace dimensions: {workspace_size}")
@@ -144,11 +144,12 @@ class OnlineOpen3DNode(Node):
         self.volume = o3d.pipelines.integration.UniformTSDFVolume(
             length=volume_length,
             resolution=512,
-            sdf_trunc=voxel_size * 5,  # 5 voxels truncation
+            sdf_trunc=voxel_size * 5 * 2,  # 5 voxels truncation
             color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8,
         )
 
         print("Starting online integration loop")
+        # self.run_once()
         # while True:
         #     self.run_once()
         #     elapsed_time = time.time() - self.start_time

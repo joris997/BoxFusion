@@ -101,6 +101,14 @@ class OnlineOpen3DNode(Node):
             self.next_frame_callback,
             10
         )
+
+        # next done publisher
+        self.next_done_pub = self.create_publisher(
+            Bool,
+            '/open3d/next_done',
+            10
+        )
+
         self.cnt = 0
         self.max_cnt = 4
         self.start_time = time.time()
@@ -234,13 +242,14 @@ class OnlineOpen3DNode(Node):
             )
 
             xyzrgb = self.volume.extract_point_cloud()
+            # TODO: this transform does not seem to do as expected
             xyzrgb.transform(self.T_restore)
             self.xyzrgb = np.hstack((np.asarray(xyzrgb.points), np.asarray(xyzrgb.colors)))
             # save to .npy
             np.save(os.path.join(self.cfg['data']['output_dir'], f'xyzrgb_o3d.npy'), self.xyzrgb)
 
             self.publish_point_cloud(self.xyzrgb)
-
+            self.next_done_pub.publish(Bool(data=True))
             break
         
 

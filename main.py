@@ -51,6 +51,7 @@ class Online3DNode(Node):
 
         # create publisher as list of PolygonStamped
         self.box_visual_publisher = self.create_publisher(MarkerArray, 'online_3d_boxes', 10)
+        self.box_label_visual_publisher = self.create_publisher(MarkerArray, 'online_3d_box_labels', 10)
         self.box_data_publisher = self.create_publisher(BoxArray, 'online_3d_box_data', 10)
         self.boxes = []
 
@@ -68,6 +69,7 @@ class Online3DNode(Node):
         # extra objects, predicates from STL, to be detected!
         self.objects = get_objects_from_predicate_file(self.cfg['recipe'])
         print("Extra objects to be detected:", self.objects)
+        # self.objects = ["broccoli", "bell_pepper", "bowl of rice", "tomato"]
         
         # the kind of dataset (online)
         dataset = get_dataset(self.cfg)
@@ -87,21 +89,18 @@ class Online3DNode(Node):
         if self.cfg['device'] is not None:
             model = model.to(self.cfg['device'])
             clip_model, preprocess = load_clip(self.cfg['clip_path'])
+
+            # standard clip classes
             text_class = np.genfromtxt(self.cfg['class_txt'], delimiter='\n', dtype=str) 
             text_class = np.char.lower(text_class)
             text_class = np.char.replace(text_class, ' ', '_')
-            # print(f"text classes {text_class}")
-            text_features = torch.load(self.cfg['class_features']).cuda()
+            text_features = text_to_feature(text_class, clip_model, device=self.cfg['device'])
 
-            # self.objects = ['white cup', 'grey cup', 'black and red cup']
-            # append extra_strings to text_class
-            text_class = np.concatenate((text_class, np.array(self.objects)), axis=0)
-            # append extra_strings features to text_features
+            # added extra object features (expected by specification)
             extra_features = text_to_feature(self.objects, clip_model, device=self.cfg['device'])
+            text_class = np.concatenate((text_class, np.array(self.objects)), axis=0)
             self.priority_features = extra_features
             self.text_features = torch.cat((text_features, extra_features), dim=0)
-            # print(f"my embedding = their embedding?: {text_features[0,:] == text_to_feature([text_class[0]], clip_model, device=args.device)[0,:]}")
-            # print("Loaded text features:", text_features.shape)
         
         self.run(model, dataset, clip_model, 
                  preprocess, text_class, augmentor, preprocessor, 
@@ -172,6 +171,32 @@ class Online3DNode(Node):
 
             marker.ns = "online_3d_boxes"
             marker.id = i                     # IMPORTANT: unique per box
+            marker.type = Marker.TEXT_VIEW_FACING
+            marker.action = Marker.ADD
+
+            marker.text = box['label']
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            marker.color.a = 1.0
+
+            marker.pose.position.x = float(np.mean(box['polygon_points'][:,0]))
+            marker.pose.position.y = float(np.mean(box['polygon_points'][:,1]))
+            marker.pose.position.z = float(np.mean(box['polygon_points'][:,2]) + 0.1)
+
+            marker.scale.z = 0.05              # text height
+
+            marker_array.markers.append(marker)
+        self.box_label_visual_publisher.publish(marker_array)
+
+        marker_array = MarkerArray()
+        for i, box in enumerate(boxes):
+            marker = Marker()
+            marker.header.frame_id = "panda/panda_link0"
+            marker.header.stamp = self.get_clock().now().to_msg()
+
+            marker.ns = "online_3d_boxes"
+            marker.id = i                     # IMPORTANT: unique per box
             marker.type = Marker.LINE_LIST
             marker.action = Marker.ADD
 
@@ -203,7 +228,7 @@ class Online3DNode(Node):
 
             marker_array.markers.append(marker)
 
-            self.box_visual_publisher.publish(marker_array)
+        self.box_visual_publisher.publish(marker_array)
 
     def run(self, 
             model, dataset, clip_model, 
@@ -505,13 +530,7 @@ class Online3DNode(Node):
                 print(f"Reached total duration of {self.cfg['total_duration']} seconds. Stopping capture.")
                 break
             
-        # save the results
-        end_time = time.time()
-        duration = end_time - start_time  
-        fps = count / duration
-        print(f"Cost: {duration:.2f} s", f"Average FPS: {fps:.2f}")
-        
-        # save global boxes for evaluation
+        # save only those boxes that lay inside the workspace
         boxes_3d = all_pred_box.pred_boxes_3d.corners.cpu().numpy() # [N,8,3]
         print(f"centers after the loop: {all_pred_box.pred_boxes_3d.center}")
         if self.cfg["detection"]["workspace_filter"]:
@@ -524,24 +543,36 @@ class Online3DNode(Node):
             all_pred_box = all_pred_box[workspace_mask]
             boxes_3d = boxes_3d[workspace_mask]
 
-
-        class_list = tokenized_text.tolist()
-        class_idx = np.array([class_list.index(c) for c in all_pred_box.categories]) #[N]
+        # re-do the segmentation on the final boxes, only keeping the boxes that lign with
+        # self.priority_features
+        print(f"Boxes before text prompt filter: {len(all_pred_box)}")
+        print(f"Their categories: {all_pred_box.categories}")
+        if True:
+            all_pred_box = text_prompt_filter(
+                all_pred_box,
+                tokenized_text,
+                self.priority_features,
+                self.objects,
+                image,
+                clip_model,
+                preprocess,
+            )
+            print(f"Boxes after text prompt filter: {len(all_pred_box)}")
+            print(f"Their categories: {all_pred_box.categories}")
+        
+        boxes_3d = all_pred_box.pred_boxes_3d.corners.cpu().numpy() # [N,8,3]
+        boxes_3d_categories = all_pred_box.categories
         if self.cfg['data']['output_dir'] is not None:# and self.cfg["eval"]:
-            if self.cfg['dataset'] == 'scannet':
-                boxes_3d = post_process(boxes_3d)
-                
             if boxes_3d.shape[0]>0:
-                save_list = [[(int(n), (boxes_3d[n]), class_list[class_idx[n]]) for n in range(len(all_pred_box))]] # list of tuples class_idx[n]
+                save_list = [[(int(n), (boxes_3d[n]), boxes_3d_categories[n]) for n in range(len(all_pred_box))]] # list of tuples class_idx[n]
                 save_box(save_list, os.path.join(self.cfg['data']['output_dir'], "boxes.pkl"))
 
             # save the pointcloud, xyzrgb, (numpy object) to pkl
             print("Saving the pointcloud xyzrgb...")
             self.xyzrgb = xyzrgb
-            # torch.save(xyzrgb.cpu(), os.path.join(self.cfg['data']['output_dir'], 'xyzrgb.pt'))
             np.save(os.path.join(self.cfg['data']['output_dir'], 'xyzrgb.npy'), xyzrgb.cpu().numpy())
         
-        self.boxes = [{'polygon_points': boxes_3d[n], 'label': class_list[class_idx[n]]} for n in range(len(all_pred_box))]
+        self.boxes = [{'polygon_points': boxes_3d[n], 'label': boxes_3d_categories[n]} for n in range(len(all_pred_box))]
         self.publish_visual_boxes()
 
 

@@ -4,7 +4,8 @@ Billards
 suitcase
 Lantern
 Radish
-Pen/Pencil
+Pen
+Pencil
 potted plant
 Bicycle
 Other Balls
@@ -14,7 +15,8 @@ Golf Club
 Corn
 Speed Limit Sign
 Penguin
-Orange/Tangerine
+Orange
+Tangerine
 Swan
 Onion
 Dessert
@@ -26,7 +28,8 @@ Hanger
 Microwave
 floor
 Trophy
-Bowl/Basin
+Bowl
+Basin
 Green Vegetables
 Cucumber
 Cabbage
@@ -56,7 +59,6 @@ Game board
 couch
 Goldfish
 CD
-orange
 Pillow
 Tomato
 Golf Ball
@@ -81,7 +83,8 @@ Skating and Skiing shoes
 Stapler
 Watermelon
 Stuffed Toy
-Blackboard/Whiteboard
+Blackboard
+Whiteboard
 Remote
 Treadmill
 Pepper
@@ -198,7 +201,8 @@ Helmet
 Marker
 Tricycle
 Lipstick
-Barrel/bucket
+Barrel
+bucket
 Yak
 vase
 Hat
@@ -214,7 +218,8 @@ parking meter
 Snowboard
 bench
 Luggage
-Cosmetics Brush/Eyeliner Pencil
+Cosmetics Brush
+Eyeliner Pencil
 scissors
 Jellyfish
 Table Tennis 
@@ -260,7 +265,8 @@ Hockey Stick
 Pigeon
 Fork
 person
-Handbag/Satchel
+Handbag
+Satchel
 Mouse
 Frisbee
 railroad
@@ -285,7 +291,8 @@ Trumpet
 Green beans
 window-other
 Canned
-Cutting/chopping Board
+Cutting
+chopping Board
 Scissors
 cow
 knife
@@ -322,7 +329,8 @@ Bakset
 Binoculars
 Bread
 Donkey
-Tape Measur/ Ruler
+Tape Measurer
+Ruler
 Tuba
 cup
 Garlic
@@ -335,7 +343,8 @@ Extractor
 Fire Extinguisher
 Sandwich
 Jug
-Cigar/Cigarette 
+Cigar
+Cigarette 
 Barbell
 spoon
 giraffe
@@ -344,7 +353,8 @@ Tie
 door
 bus
 Toilet Paper
-Picture/Frame
+Picture
+picture Frame
 donut
 Pig
 Traffic cone
@@ -388,19 +398,22 @@ bridge
 Nightstand
 Giraffe
 Chainsaw
-Wallet/Purse
+Wallet
+Purse
 Hot dog
 Person
 Ballon
 Antelope
 pillow
-Washing Machine/Drying Machine
+Washing Machine
+Drying Machine
 toaster
 river
 Cosmetics Mirror
 Crosswalk Sign
 Recorder
-Cabinet/shelf
+Cabinet
+shelf
 wall-wood
 cardboard
 Stool
@@ -435,7 +448,8 @@ Green Onion
 Laptop
 Apple
 Towel
-Router/modem
+Router
+modem
 Gloves
 Crane
 Paint Brush

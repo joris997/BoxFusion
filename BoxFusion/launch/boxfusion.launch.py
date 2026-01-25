@@ -53,12 +53,12 @@ def generate_launch_description():
     R_cam2ee = np.array(R_cam2ee)
     t_cam2ee = np.array(t_cam2ee)
     # extract translation and euler angles
-    q = R.from_matrix(R_cam2ee).as_quat(scalar_first=False)#('xyz', degrees=False)
+    q = R.from_matrix(R_cam2ee).as_quat()#('xyz', degrees=False)
     # some additional rotations
     R_new = R.from_quat(q) * R.from_euler('x', np.pi/2)
-    q = R_new.as_quat(scalar_first=False)
+    q = R_new.as_quat()
     R_new = R.from_quat(q) * R.from_euler('z', np.pi/2)
-    q = R_new.as_quat(scalar_first=False)
+    q = R_new.as_quat()
     
     tf_broadcaster_node_1 = Node(
         package='tf2_ros',
@@ -70,7 +70,7 @@ def generate_launch_description():
         output='screen'
     )
 
-    # static transform because boxfusion has different camera frame convention than rviz/azure kinect
+    # static transform because it has different camera frame convention than rviz/azure kinect
     # -90 around x, then 90 around z
     tf_broadcaster_node_3 = Node(
         package='tf2_ros',

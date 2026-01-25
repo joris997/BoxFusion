@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import Any, Dict, Dict, Optional, List
 import numpy as np
 import rerun
 import rerun.blueprint as rrb
@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image
 from scipy.spatial.transform import Rotation
 
-
+import clip
 from boxfusion.batching import Sensors
 from boxfusion.color import random_color_v2
 from boxfusion.capture_stream import ScannetDataset, CA1MDataset, ROSDataset
@@ -398,12 +398,13 @@ def load_data(filename):
 def load_clip(pretrained_path=None):
     print(f'[INFO] loading CLIP model...')
 
-    if pretrained_path is None:
-        model, _, preprocess = open_clip.create_model_and_transforms("ViT-H-14", pretrained="laion2b_s32b_b79k")
-    else:
-        model, _, preprocess = open_clip.create_model_and_transforms("ViT-H-14", pretrained=pretrained_path)  # load from local (OK!)
+    # if pretrained_path is None:
+    #     model, _, preprocess = open_clip.create_model_and_transforms("ViT-H-14", pretrained="laion2b_s32b_b79k")
+    # else:
+    #     model, _, preprocess = open_clip.create_model_and_transforms("ViT-H-14", pretrained=pretrained_path)  # load from local (OK!)
+    # model = model.cuda()
 
-    model.cuda()
+    model, preprocess = clip.load("ViT-B/32", device="cuda")
     model.eval()
     print(f'[INFO]', ' finish loading CLIP model...')
     return model, preprocess
@@ -439,39 +440,16 @@ def scale_boxes(boxes, H, W, scale=1.2):
 @torch.no_grad()
 def retriev(
     model, preprocess, elements, 
-    text_features, priority_features,
-    device
+    text_features, device
 ) -> int:
-    # preprocessed_images = [preprocess(image).to(device) for image in elements]
-    # stacked_images = torch.stack(preprocessed_images)
-    # image_features = model.encode_image(stacked_images)
-    # image_features /= image_features.norm(dim=-1, keepdim=True)
-    # text_features /= text_features.norm(dim=-1, keepdim=True) # added
-
-    # probs = 100.0 * image_features @ text_features.T
-
-    # return probs, image_features
-
-    # Weighted similarity score with priority features
-    priority_weight = 0.5  # Weight for priority features contribution
-    
     preprocessed_images = [preprocess(image).to(device) for image in elements]
     stacked_images = torch.stack(preprocessed_images)
     image_features = model.encode_image(stacked_images)
     image_features /= image_features.norm(dim=-1, keepdim=True)
-    text_features /= text_features.norm(dim=-1, keepdim=True)
+    text_features /= text_features.norm(dim=-1, keepdim=True) # added
 
     probs = 100.0 * image_features @ text_features.T
-    
-    # Add additional signal from priority features
-    if priority_features is not None and priority_features.numel() > 0:
-        priority_features = priority_features / priority_features.norm(dim=-1, keepdim=True)
-        priority_probs = 100.0 * image_features @ priority_features.T
-        
-        # Find best match in priority features and boost main scores
-        best_priority_scores, best_priority_idx = priority_probs.max(dim=-1, keepdim=True)
-        probs += priority_weight * best_priority_scores
-    
+
     return probs, image_features
 
 def segment_image(image, bbox):
@@ -548,17 +526,15 @@ def crop_image(boxes, rgb):
     return cropped_boxes, cropped_images
 
 def text_prompt(boxes, class_prompt, 
-                text_features, priority_features, 
+                text_features, priority_features,
                 img_path, clip_model, preprocess):
     cropped_boxes, cropped_images= crop_image(
         boxes, img_path
     )
 
-
     scores, img_features = retriev(
         clip_model, preprocess, cropped_images, 
-        text_features, priority_features, 
-        device="cuda:0"
+        text_features, device="cuda:0"
     )
 
     max_values, max_id = torch.max(scores, dim=-1) #
@@ -566,6 +542,56 @@ def text_prompt(boxes, class_prompt,
     categories = class_prompt[max_id]
 
     return  categories, img_features
+
+def text_prompt_filter(pred_instances, class_prompt,
+                       text_features, text_labels,
+                       image, clip_model, preprocess):
+    boxes = pred_instances.pred_boxes.cpu().numpy()
+    cropped_boxes, cropped_images= crop_image(
+        boxes, image
+    )
+    # Now we get all the boxes. We SAM the image and loop through all
+    # the image segmentations. We assess all text_features and find
+    # the box with the highest score. After we assessed all the text_features
+    # the boxes that are not assigned to any text_feature are discarded.
+    # from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
+    # sam = sam_model_registry["vit_h"](
+    #     checkpoint="sam_vit_h_4b8939.pth"
+    # )
+    # mask_generator = SamAutomaticMaskGenerator(
+    #     sam,
+    #     points_per_side=32,
+    #     pred_iou_thresh=0.9,
+    #     stability_score_thresh=0.96,
+    #     min_mask_region_area=800,
+    # )
+
+    best_scores: List[float] = [-1.0 for _ in text_features]
+    best_idxs: List[Optional[int]] = [None for _ in text_features]
+    best_labels: List[Optional[str]] = [None for _ in text_features]
+
+    for idx, cur_image in enumerate(cropped_images):
+        crop_tensor = preprocess(cur_image).unsqueeze(0).to("cuda")
+
+        with torch.no_grad():
+            image_features = clip_model.encode_image(crop_tensor)
+            image_features /= image_features.norm(dim=-1, keepdim=True)
+
+            scores = 100.0 * image_features @ text_features.T
+
+        # update best match per prompt
+        for jdx, score in enumerate(scores.tolist()[0]):
+            if score > best_scores[jdx]:
+                best_scores[jdx] = score
+                best_idxs[jdx] = idx
+                best_labels[jdx] = text_labels[jdx]
+                print(f"New best score for prompt {text_labels[jdx]}: {score}")
+
+    pred_instances = pred_instances[best_idxs]
+    pred_instances.categories = best_labels
+
+    return pred_instances
+
 
 def get_objects_from_predicate_file(
         recipe:str,

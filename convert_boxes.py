@@ -19,9 +19,6 @@ def main(args=None, recipe:str=None, plot:bool=False):
     results_folder = os.path.expanduser('~/c_space_stl_results')
     # extra objects, predicates from STL, to be detected!
     objects = get_objects_from_predicate_file(recipe,results_folder)
-    # get all box_*_<object>.pkl files for the recipe and check against objects
-    # if any object is missing, create a manual box for it
-    existing_boxes = []
     response_dir = os.path.join(results_folder,recipe)
 
     # load original point cloud from BoxFusion in xyzrgb.npy
@@ -67,10 +64,6 @@ def main(args=None, recipe:str=None, plot:bool=False):
             with open(os.path.join(response_dir, file), "wb") as f:
                 pickle.dump(box_obj, f)
 
-    print("Existing boxes:", existing_boxes)
-    missing_objects = [obj for obj in objects if obj not in existing_boxes]
-    print("Missing objects for manual box creation:", missing_objects)
-    
     return 0
 
 
